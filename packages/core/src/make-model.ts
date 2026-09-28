@@ -47,7 +47,18 @@ export const MAKE_ALIASES: Record<string, string> = {
   lexus: "lexus",
   subaru: "subaru",
   chevrolet: "chevrolet",
+  cupra: "cupra",
 };
+
+/** All canonical make slugs this app knows about (the alias table's values). */
+const KNOWN_MAKE_SLUGS = new Set(Object.values(MAKE_ALIASES));
+
+/** True if `slug` is a canonical make slug we recognize (already normalized,
+ * e.g. via `normalizeMake`). Used to tell a real make apart from a URL path
+ * segment that only looks like one (e.g. a source's category slug). */
+export function isKnownMakeSlug(slug: string | null | undefined): boolean {
+  return Boolean(slug && KNOWN_MAKE_SLUGS.has(slug));
+}
 
 export function slugifyMakeModel(value: string): string {
   return normalizeEnumToken(value).replace(/[^a-z0-9]+/g, "-").replace(/^-+|-+$/g, "");

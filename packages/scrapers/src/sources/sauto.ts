@@ -16,7 +16,14 @@
  *   built manually.
  * - Detail URL: `https://www.sauto.cz/osobni/detail/{manufacturer_cb.seo_name}/{model_cb.seo_name}/{id}`.
  * - `power` (kW) is essentially never present on list items (only on the
- *   detail page), so `powerKw` is usually null here — that's expected.
+ *   detail page) — confirmed live across ~300 sampled results, `power` was
+ *   null on every single one. FOLLOW-UP FIX (matcher now treats a null
+ *   listing.powerKw as "unknown" rather than a hard mismatch, so this no
+ *   longer silently drops otherwise-matching listings from a power_min_kw
+ *   search — but power text is often still embedded in the free-text model
+ *   name, e.g. "2.0 EcoBlue 125 kW", so it's parsed from `name`/
+ *   `additional_model_name` as a best-effort fallback via the shared
+ *   `extractPowerKw` helper when the structured `power` field is missing).
  * - Server-side filters confirmed live: `manufacturer_model_seo` (e.g.
  *   `skoda` or `skoda:octavia`, lowercase seo slugs), `price_from`,
  *   `price_to`, `tachometer_to`, `vehicle_age_from`/`vehicle_age_to`
@@ -30,6 +37,7 @@ import { z } from "zod";
 import type { RawListing, SearchQuery, FuelType, TransmissionType } from "@scrapping-auta/core";
 import { fetchJson, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
+import { extractPowerKw } from "./_util-b.js";
 
 const SEARCH_ENDPOINT = "https://www.sauto.cz/api/v1/items/search";
 const CATEGORY_ID_OSOBNI = 838;
@@ -162,6 +170,7 @@ export function parseSautoResponse(json: unknown): RawListing[] {
         ? `https://www.sauto.cz/osobni/detail/${make}/${model}/${v.id}`
         : `https://www.sauto.cz/osobni/detail/${v.id}`;
     const year = yearFromDate(v.in_operation_date) ?? yearFromDate(v.manufacturing_date);
+    const powerText = `${v.name ?? ""} ${v.additional_model_name ?? ""}`;
     out.push({
       sourceId: String(v.id),
       url,
@@ -175,7 +184,7 @@ export function parseSautoResponse(json: unknown): RawListing[] {
       currency: "CZK",
       fuel: v.fuel_cb?.name ?? null,
       transmission: v.gearbox_cb?.name ?? null,
-      powerKw: v.power ?? null,
+      powerKw: v.power ?? extractPowerKw(powerText),
       body: null,
       color: null,
       location: v.locality?.district ?? v.locality?.region ?? null,

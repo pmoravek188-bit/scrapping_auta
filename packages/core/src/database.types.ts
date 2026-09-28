@@ -47,6 +47,8 @@ export interface Database {
           keywords: string[];
           exclude_keywords: string[];
           sources: string[];
+          drive: string[];
+          features: string[];
           notify: boolean;
           created_at: string;
         };
@@ -82,6 +84,8 @@ export interface Database {
           seller_type: string;
           vin: string | null;
           image_urls: string[];
+          drive: string | null;
+          equipment: string[];
           first_seen: string;
           last_seen: string;
           is_active: boolean;

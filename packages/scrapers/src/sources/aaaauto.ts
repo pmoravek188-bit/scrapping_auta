@@ -38,6 +38,7 @@ import type { RawListing, SearchQuery } from "@scrapping-auta/core";
 import { slugifyMakeModel } from "@scrapping-auta/core";
 import { fetchText, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
+import { extractPowerKw } from "./_util-b.js";
 
 const BASE_URL = "https://www.aaaauto.cz";
 const PAGE_SIZE = 35;
@@ -131,7 +132,9 @@ export function parseAaaAutoHtml(html: string): RawListing[] {
         currency: item.offers?.priceCurrency ?? "CZK",
         fuel: item.fuelType ?? null,
         transmission: item.vehicleTransmission ?? null,
-        powerKw: null,
+        // Not in the ld+json payload; best-effort parse from the title text
+        // (e.g. "Ford Tourneo Custom 2.0 EcoBlue 125 kW") when present.
+        powerKw: extractPowerKw(item.name ?? ""),
         body: item.bodyType ?? null,
         color: item.color ?? null,
         location: null,

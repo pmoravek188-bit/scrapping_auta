@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { BODY_TYPES, FUEL_TYPES, SELLER_TYPES, TRANSMISSION_TYPES } from "./enums.js";
+import { BODY_TYPES, DRIVE_TYPES, FUEL_TYPES, SELLER_TYPES, TRANSMISSION_TYPES } from "./enums.js";
 
 /** A listing as scraped from a source, before normalization. Kept loose on purpose. */
 export const RawListingSchema = z.object({
@@ -23,6 +23,18 @@ export const RawListingSchema = z.object({
   sellerType: z.string().nullable().optional(),
   vin: z.string().nullable().optional(),
   imageUrls: z.array(z.string()).optional().default([]),
+  /** Structured drive-type value from the source, if it exposes one (e.g.
+   * carvago's `DRIVE_4X4` catalog feature) — free text is fine too, it goes
+   * through `parseDriveType`'s alias table just like fuel/transmission. */
+  drive: z.string().nullable().optional(),
+  /** Free-text equipment/feature list, for sources that expose one cheaply
+   * (e.g. carvago's `catalog_features` labels) — used only to improve
+   * "Výbava" feature-chip matching, not stored as its own filter dimension.
+   * No `.default([])` here on purpose (unlike `imageUrls`): most adapters
+   * don't set this field at all, and a default would make it a required key
+   * in every adapter's object-literal `RawListing` (TS excess/missing
+   * property checks) — `normalizeListing` falls back to `[]` itself. */
+  equipment: z.array(z.string()).nullable().optional(),
 });
 export type RawListing = z.infer<typeof RawListingSchema>;
 
@@ -51,6 +63,8 @@ export const ListingSchema = z.object({
   vin: z.string().nullable(),
   imageUrls: z.array(z.string()),
   fingerprint: z.string(),
+  drive: z.enum(DRIVE_TYPES).nullable(),
+  equipment: z.array(z.string()),
 });
 export type Listing = z.infer<typeof ListingSchema>;
 
@@ -71,5 +85,9 @@ export const SearchQuerySchema = z.object({
   keywords: z.array(z.string()).optional().default([]),
   excludeKeywords: z.array(z.string()).optional().default([]),
   sources: z.array(z.string()).optional().default([]),
+  /** Drive type chips ("Pohon"): 4x4/AWD, přední (FWD), zadní (RWD). Empty = any. */
+  drive: z.array(z.enum(DRIVE_TYPES)).optional().default([]),
+  /** Equipment + "Verze" (wheelbase/length) chip ids, see `features.ts`. Empty = any. */
+  features: z.array(z.string()).optional().default([]),
 });
 export type SearchQuery = z.infer<typeof SearchQuerySchema>;

@@ -2,6 +2,9 @@ import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   matchesSearch,
   normalizeListing,
+  normalizeMake,
+  normalizeModel,
+  SearchQuerySchema,
   type Database,
   type Listing,
   type SearchQuery,
@@ -20,6 +23,10 @@ export interface RunOptions {
   sourceFilter?: string;
   supabaseUrl?: string;
   supabaseServiceRoleKey?: string;
+  /** Test a specific saved-search shape in dry-run instead of the default
+   * "everything" query (CLI: `--query='{"make":"ford","...":...}'`). Fields
+   * are normalized/defaulted the same way a real saved search would be. */
+  queryOverride?: Partial<SearchQuery>;
 }
 
 interface SearchRow {
@@ -40,14 +47,19 @@ interface SearchRow {
   keywords: string[];
   exclude_keywords: string[];
   sources: string[];
+  drive: string[];
+  features: string[];
   notify: boolean;
 }
 
 function toSearchQuery(row: SearchRow): SearchQuery {
   return {
     id: row.id,
-    make: row.make,
-    model: row.model,
+    // Saved searches can carry raw, un-normalized user input (e.g. a
+    // trailing space, diacritics, or a display name instead of a slug) —
+    // normalize here so every adapter and the matcher get a clean slug.
+    make: normalizeMake(row.make),
+    model: normalizeModel(row.model),
     yearFrom: row.year_from,
     yearTo: row.year_to,
     priceFrom: row.price_from,
@@ -60,6 +72,19 @@ function toSearchQuery(row: SearchRow): SearchQuery {
     keywords: row.keywords ?? [],
     excludeKeywords: row.exclude_keywords ?? [],
     sources: row.sources ?? [],
+    drive: (row.drive ?? []) as SearchQuery["drive"],
+    features: row.features ?? [],
+  };
+}
+
+/** Builds a fully-defaulted SearchQuery from a partial CLI/test override,
+ * normalizing make/model the same way a real saved search would be. */
+function toOverrideQuery(override: Partial<SearchQuery>): SearchQuery {
+  const parsed = SearchQuerySchema.parse(override);
+  return {
+    ...parsed,
+    make: normalizeMake(parsed.make),
+    model: normalizeModel(parsed.model),
   };
 }
 
@@ -145,10 +170,15 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
     let errorText: string | null = null;
 
     try {
+      const overrideQuery = opts.queryOverride ? toOverrideQuery(opts.queryOverride) : null;
+      if (overrideQuery && overrideQuery.sources.length > 0 && !overrideQuery.sources.includes(sourceId)) {
+        console.log(`[runner] --query sources filter excludes "${sourceId}", skipping`);
+        continue;
+      }
       const queries: SearchQuery[] = db
         ? relevantSearches.map(toSearchQuery)
         : [
-            {
+            overrideQuery ?? {
               make: null,
               model: null,
               fuel: [],
@@ -156,6 +186,8 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
               keywords: [],
               excludeKeywords: [],
               sources: [],
+              drive: [],
+              features: [],
             },
           ];
 
@@ -179,6 +211,17 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
 
       if (dryRun || !db) {
         console.log(`[runner] [dry-run] ${sourceId}: ${normalized.length} listings`);
+        if (overrideQuery) {
+          const matched = normalized.filter((listing) => matchesSearch(listing, overrideQuery));
+          console.log(
+            `[runner] [dry-run] ${sourceId}: ${matched.length}/${normalized.length} listings match --query`
+          );
+          for (const listing of matched.slice(0, 5)) {
+            console.log(
+              `  [match] ${listing.title} | ${listing.priceCzk ?? "?"} Kč | ${listing.year ?? "?"} | ${listing.mileageKm ?? "?"} km`
+            );
+          }
+        }
         for (const listing of normalized.slice(0, 5)) {
           console.log(
             `  - ${listing.title} | ${listing.priceCzk ?? "?"} Kč | ${listing.year ?? "?"} | ${listing.mileageKm ?? "?"} km`
@@ -234,6 +277,8 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
               seller_type: listing.sellerType,
               vin: listing.vin,
               image_urls: listing.imageUrls,
+              drive: listing.drive,
+              equipment: listing.equipment,
               last_seen: now,
               is_active: true,
               fingerprint: listing.fingerprint,

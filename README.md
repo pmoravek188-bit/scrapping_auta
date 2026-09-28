@@ -33,7 +33,7 @@ scrapping_auta/
   (žádná těžká UI knihovna). Přihlášení přes Supabase Auth magic link
   (`@supabase/ssr`), middleware chrání všechny stránky kromě `/login` a
   `/auth/callback`.
-- **Scraper**: TypeScript běžící v GitHub Actions (cron `*/30 * * * *` +
+- **Scraper**: TypeScript běžící v GitHub Actions (cron `0 5 * * *` = jednou denně v 7:00 letního času +
   ruční spuštění s volitelným `source` inputem). Jeden job spustí všechny
   zapnuté zdroje souběžně v procesu — pád jednoho zdroje nezastaví ostatní,
   chyby se zapisují do `scrape_runs`.
@@ -162,7 +162,7 @@ posílat pouze z adresy `onboarding@resend.dev` a pouze **na e-mail majitele
 Resend účtu**. Pro víc příjemců nebo vlastní odesílací adresu je potřeba
 zdarma ověřit vlastní doménu v Resendu.
 
-Workflow `scrape.yml` běží každých 30 minut (`workflow_dispatch` navíc
+Workflow `scrape.yml` běží jednou denně v 05:00 UTC (`workflow_dispatch` navíc
 umožňuje ruční spuštění, volitelně jen pro jeden zdroj) a zároveň drží
 Supabase free projekt aktivní (jinak po týdnu nečinnosti pauzuje).
 

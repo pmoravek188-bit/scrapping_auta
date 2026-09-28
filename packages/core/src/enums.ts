@@ -30,6 +30,34 @@ export type BodyType = (typeof BODY_TYPES)[number];
 export const SELLER_TYPES = ["private", "dealer", "unknown"] as const;
 export type SellerType = (typeof SELLER_TYPES)[number];
 
+export const DRIVE_TYPES = ["awd", "fwd", "rwd"] as const;
+export type DriveType = (typeof DRIVE_TYPES)[number];
+
+/** Drive-type synonyms (badge names, marketing terms, Czech/German text) ->
+ * canonical DriveType. Keys are matched after `normalizeEnumToken` (lowercase,
+ * diacritics stripped), so e.g. "4×4" and "4x4" both hit the "4x4" key. */
+export const DRIVE_ALIASES: Record<string, DriveType> = {
+  "4x4": "awd",
+  "4wd": "awd",
+  awd: "awd",
+  "4motion": "awd",
+  quattro: "awd",
+  xdrive: "awd",
+  "4matic": "awd",
+  all4: "awd",
+  allgrip: "awd",
+  "e-four": "awd",
+  "4x4i": "awd",
+  "sh-awd": "awd",
+  "pohon vsech kol": "awd",
+  fwd: "fwd",
+  "predni pohon": "fwd",
+  "pohon predni napravy": "fwd",
+  rwd: "rwd",
+  "zadni pohon": "rwd",
+  "pohon zadni napravy": "rwd",
+};
+
 /** Czech/Slovak diacritics-aware fuel keyword map -> canonical FuelType. */
 export const FUEL_ALIASES: Record<string, FuelType> = {
   benzin: "petrol",
@@ -111,4 +139,12 @@ export function parseBodyType(value: string | null | undefined): BodyType | null
   if (!value) return null;
   const key = normalizeEnumToken(value);
   return BODY_ALIASES[key] ?? null;
+}
+
+/** Exact-match drive-type parse (structured source field, e.g. a codebook
+ * value) — for free-text title/variant scanning use `inferDrive` instead. */
+export function parseDriveType(value: string | null | undefined): DriveType | null {
+  if (!value) return null;
+  const key = normalizeEnumToken(value);
+  return DRIVE_ALIASES[key] ?? null;
 }

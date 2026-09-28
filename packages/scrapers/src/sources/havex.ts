@@ -17,9 +17,23 @@
  * are left to the client-side matcher; only the brand is filtered
  * server-side via the URL path.
  *
+ * RE-VERIFIED live 2026-09-28: the `-<brand>` URL suffix is NOT limited to
+ * Škoda/Seat/Cupra (Havex's most prominently branded lines) — every brand
+ * tried returns HTTP 200 and is genuinely filtered server-side: makes Havex
+ * actually stocks (`skoda`, `seat`, `cupra`, but also e.g. `volkswagen`,
+ * `ford`, `audi`, `renault`, `citroen`, `peugeot`, `alfa-romeo`, confirmed
+ * live) return only that brand's cars, and makes it doesn't currently stock
+ * (e.g. `bmw`, `mercedes-benz`, `land-rover`, or a nonsense slug) return an
+ * empty (but still 200) result — never the unfiltered full inventory. So the
+ * normalized make slug is always passed straight through as the suffix — no
+ * hardcoded allow-list is needed, and an unstocked make correctly yields no
+ * results instead of a false "no filter" match.
+ *
  * Each card is `.carItem` containing `a.carLink[href]` (id is the leading
  * number in the last URL segment, e.g.
- * `/cz/detail/528453-skoda-fabia-1-9-tdi-rs`), `.carHeader` (make+model),
+ * `/cz/detail/528453-skoda-fabia-1-9-tdi-rs`), `.carHeader` (confirmed to be
+ * make+model combined in one heading, e.g. "Škoda Fabia" or "Renault
+ * Master" — split with `inferMakeModel` rather than treated as a bare make),
  * `.carTitle` (variant/engine), `.carPrice` (price), and a `<table>` of
  * label/value rows confirmed to always use these exact Czech labels:
  * "Palivo" (fuel), "Převodovka" (transmission), "V provozu od" (year) and
@@ -27,24 +41,16 @@
  */
 import * as cheerio from "cheerio";
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
-import { normalizeMake } from "@scrapping-auta/core";
+import { inferMakeModel, normalizeMake } from "@scrapping-auta/core";
 import { fetchText, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
-import { guessFuel, guessTransmission, parseCzNumber } from "./_util-b.js";
+import { extractPowerKw, guessFuel, guessTransmission, parseCzNumber } from "./_util-b.js";
 
 const BASE_URL = "https://www.havex.cz";
 
-/** The only brands Havex sells (confirmed from its own nav / brand-scoped listing paths). */
-const MAKE_PATH_SUFFIX: Record<string, string> = {
-  skoda: "skoda",
-  seat: "seat",
-  cupra: "cupra",
-};
-
 export function buildHavexUrl(query: SearchQuery, page: number): string {
   const normalizedMake = normalizeMake(query.make);
-  const suffix = normalizedMake ? MAKE_PATH_SUFFIX[normalizedMake] : undefined;
-  const path = suffix ? `/cz/ojete-vozy-${suffix}` : "/cz/ojete-vozy";
+  const path = normalizedMake ? `/cz/ojete-vozy-${normalizedMake}` : "/cz/ojete-vozy";
   const params = new URLSearchParams();
   if (page > 0) params.set("page", String(page + 1));
   const qs = params.toString();
@@ -82,12 +88,14 @@ export function parseHavexHtml(html: string): RawListing[] {
       else if (key.startsWith("Nájezd")) mileageKm = parseCzNumber(value);
     });
 
+    const { make, model } = inferMakeModel(header);
+
     out.push({
       sourceId,
       url,
       title: [header, variant].filter(Boolean).join(" "),
-      make: header || null,
-      model: null,
+      make,
+      model,
       variant: variant || null,
       year,
       mileageKm,
@@ -95,7 +103,7 @@ export function parseHavexHtml(html: string): RawListing[] {
       currency: "CZK",
       fuel: guessFuel(fuelText),
       transmission: guessTransmission(transmissionText),
-      powerKw: null,
+      powerKw: extractPowerKw(variant),
       body: null,
       color: null,
       location: null,

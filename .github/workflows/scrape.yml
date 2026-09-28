@@ -6,8 +6,9 @@ concurrency:
 
 on:
   schedule:
-    # Every 30 minutes. Also keeps the Supabase free-tier project active.
-    - cron: "*/30 * * * *"
+    # Once a day at 05:00 UTC (07:00 Prague summer time). Also keeps the
+    # Supabase free-tier project active (it pauses after 7 days idle).
+    - cron: "0 5 * * *"
   workflow_dispatch:
     inputs:
       source:

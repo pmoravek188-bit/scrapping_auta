@@ -76,6 +76,51 @@ describe("carvago adapter", () => {
     });
   });
 
+  it("maps the DRIVE_4X4 catalog feature to drive:'awd' and FEATURE_TRAILERCOUPLING to equipment", () => {
+    const html = `<script id="__NEXT_DATA__">${JSON.stringify({
+      props: {
+        pageProps: {
+          searchResults: {
+            total: 1,
+            cars: [
+              {
+                id: 1,
+                slug: "ford-tourneo-custom-4x4",
+                title: "Ford Tourneo Custom 4x4",
+                make: { label: "Ford" },
+                model: { label: "Tourneo Custom" },
+                price: 1200000,
+                mileage: 40000,
+                registration_date: "2023-01-01",
+                seller: { type: { const_key: "SELLERTYPE_PARTNER_DEALERSHIP" } },
+                catalog_features: [
+                  { const_key: "DRIVE_4X4", label: "4x4" },
+                  { const_key: "FEATURE_TRAILERCOUPLING", label: "Tažné zařízení" },
+                  { const_key: "TRANSMISSION_AUTOMATIC", label: "Automat" },
+                ],
+              },
+              {
+                id: 2,
+                slug: "ford-tourneo-custom-fwd",
+                title: "Ford Tourneo Custom",
+                make: { label: "Ford" },
+                model: { label: "Tourneo Custom" },
+                price: 900000,
+                mileage: 30000,
+                catalog_features: [{ const_key: "DRIVE_4X2", label: "4x2" }],
+              },
+            ],
+          },
+        },
+      },
+    })}</script>`;
+    const items = parseCarvagoHtml(html);
+    expect(items[0]?.drive).toBe("awd");
+    expect(items[0]?.equipment).toEqual(["tažné zařízení"]);
+    // DRIVE_4X2 is ambiguous (front or rear) — deliberately left unmapped.
+    expect(items[1]?.drive).toBeNull();
+  });
+
   it("returns an empty array when __NEXT_DATA__ is missing or malformed", () => {
     expect(parseCarvagoHtml("<html><body>no data</body></html>")).toEqual([]);
     expect(

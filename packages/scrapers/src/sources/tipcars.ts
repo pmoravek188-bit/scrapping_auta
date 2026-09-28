@@ -1,16 +1,15 @@
 /**
- * TipCars.com adapter — VERIFIED live 2026-09-28.
+ * TipCars.com adapter.
  *
- * The old guess (`/inzerce/osobni-vozy/?strana=1`) 404s. The real used-car
- * listing root is `https://www.tipcars.com/ojete` (all used cars) and
- * supports server-side filtering by make/model via URL PATH segments, not
- * query params:
+ * The real used-car listing root is `https://www.tipcars.com/ojete` (all
+ * used cars) and supports server-side filtering by make/model via URL PATH
+ * segments, not query params:
  *   - `/ojete/{makeSlug}`            e.g. `/ojete/skoda`
  *   - `/ojete/{makeSlug}-{modelSlug}` e.g. `/ojete/skoda-octavia`
- * (confirmed live: `numberOfItems` in the embedded JSON-LD differs between
+ * (confirmed live: the "Zobrazeno N inzerátů" count differs between
  * `/ojete`, `/ojete/skoda`, and `/ojete/skoda-octavia`). Query params for
  * price/year/mileage (`cena-od`, `rok-od`, `najeto-do`, ...) were tried and
- * do NOT change `numberOfItems` — they're not wired server-side (likely
+ * do NOT change that count — they're not wired server-side (likely
  * client-side-only filters in the SPA), so those are left to the runner's
  * matcher.
  *
@@ -24,33 +23,54 @@
  * when a page's items are all ids already seen on an earlier page (dedup by
  * sourceId), whichever comes first.
  *
- * Listing cards render id/url/name/price/image via a `<script type=
- * "application/ld+json">` `ItemList` block (used for those fields — more
- * robust than CSS selectors). Make/model/body/fuel are derived from the
- * listing URL path itself, which TipCars structures as
- * `/{make-model-slug}/{body}/{fuel}/{title-slug}-{id}.html` (confirmed
- * against dozens of live listing URLs, e.g.
- * `/skoda-octavia/kombi/nafta/skoda-octavia-2-0-tdi-...-54003315.html`,
- * `/land-rover-discovery/suv/nafta/...`,
- * `/mercedes-benz-tridy-c/sedan/benzin/...`).
- *
- * year/mileage/power are NOT missing from the list page as first assumed —
- * they just aren't in the ld+json. Each listing card carries a
- * `data-measure-data-value` attribute (a Stimulus/analytics hook) whose
- * value is a JSON array `["advertise", {id, made_year, engine_power,
- * odometer, price, ...}, "<hash>"]`; `id` matches the ld+json item's
- * trailing URL id, `made_year` is the registration year, `engine_power` is
- * kW, `odometer` is km (confirmed against 20+ live cards, including
- * cross-checking `price` in that blob against the ld+json price — always
- * equal). That map is built once per page and joined onto the ld+json items
- * by sourceId. sellerType still isn't derivable from the listing page, so
- * it's left "unknown" (a valid SELLER_TYPES value) rather than guessed.
+ * RE-VERIFIED live 2026-09-28: the site no longer embeds a `ItemList`
+ * `application/ld+json` block on search-result pages (confirmed absent on
+ * `/ojete`, `/ojete/skoda`, `/ojete/skoda-octavia` and a make/model-filtered
+ * page like `/ojete/ford-tourneo-custom` — only `Organization`/`WebSite`
+ * ld+json remain). Listing cards are now parsed directly from the rendered
+ * markup instead:
+ * - Each card is a `[data-listing-item-id-value]` element (the numeric id);
+ *   confirmed to appear exactly once per distinct listing on a page (some
+ *   duplicate desktop/mobile sub-blocks live *inside* one such element, but
+ *   the id attribute itself is unique per card).
+ * - Its first `a[href$=".html"]` is the detail link, structured as
+ *   `/{make-model-slug}/{body}/{fuel}/{title-slug}-{id}.html` (confirmed
+ *   against dozens of live listing URLs, e.g.
+ *   `/skoda-octavia/kombi/nafta/skoda-octavia-2-0-tdi-...-54003315.html`,
+ *   `/land-rover-discovery/suv/nafta/...`) — used for make/model/body/fuel.
+ * - Title: `.advertisement-name__title h3`. Variant/trim text:
+ *   `.advertisement-name__title p`. Price: `.advertisement-name__price`.
+ * - year/mileage/power/fuel/transmission: each card has a set of
+ *   `.detail-box-S[title="..."]` boxes with a fixed set of Czech `title`
+ *   labels — confirmed live: "V provozu od/Rok výroby" (year), "Tachometr"
+ *   (mileage km), "Výkon" (power kW), "Palivo" (fuel text), "Převodovka"
+ *   (transmission text, e.g. "manuál"/"automat"). Not every card has these
+ *   (smaller/boosted "advertisement--small-img" cards omit them) — for those,
+ *   year/mileage/power fall back to the card's `data-measure-data-value`
+ *   attribute (a Stimulus/analytics hook, JSON array `["advertise", {id,
+ *   made_year, engine_power, odometer, price, ...}]`, confirmed present on
+ *   every card) when the detail-box value is missing.
+ * - Make/model: derived from the URL's make-model slug via
+ *   `splitMakeModelSlug` (aware of known multi-word makes so e.g.
+ *   "land-rover-discovery" isn't split as make="land" model="rover-discovery").
+ *   BUG FIX: that first URL path segment is sometimes a category, not a
+ *   make (e.g. "uzitkove" = "commercial vehicles", seen on some van/pickup
+ *   listings reached via a body-type category rather than a brand page) —
+ *   confirmed by it never being a recognized make slug. When the parsed
+ *   "make" isn't one of the app's known make slugs
+ *   (`@scrapping-auta/core`'s `isKnownMakeSlug`), it's discarded and
+ *   make/model are instead inferred from the listing title text with
+ *   `inferMakeModel`, which is far more reliable than the mis-parsed
+ *   category segment.
+ * - sellerType still isn't derivable from the listing page, so it's left
+ *   "unknown" (a valid SELLER_TYPES value) rather than guessed.
  */
 import * as cheerio from "cheerio";
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
-import { MAKE_ALIASES, slugifyMakeModel } from "@scrapping-auta/core";
+import { MAKE_ALIASES, inferMakeModel, isKnownMakeSlug, normalizeMake, slugifyMakeModel } from "@scrapping-auta/core";
 import { fetchText, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
+import { guessFuel, guessTransmission, parseCzNumber } from "./_util-b.js";
 
 const BASE_URL = "https://www.tipcars.com";
 const PAGE_SIZE = 20;
@@ -85,17 +105,7 @@ function splitMakeModelSlug(slug: string): { make: string; model: string | null 
   return { make: slug.slice(0, idx), model: slug.slice(idx + 1) };
 }
 
-const LISTING_URL_RE = /^https:\/\/www\.tipcars\.com\/([a-z0-9-]+)\/([a-z-]+)\/([a-z-]+)\/[a-z0-9-]+-(\d+)\.html$/;
-
-interface TipCarsItemListItem {
-  item?: {
-    "@id"?: string;
-    url?: string;
-    name?: string;
-    image?: string;
-    offers?: { price?: number };
-  };
-}
+const LISTING_HREF_RE = /^\/([a-z0-9-]+)\/([a-z-]+)\/([a-z-]+)\/[a-z0-9-]+\.html$/;
 
 interface TipCarsMeasureData {
   id?: string;
@@ -105,90 +115,116 @@ interface TipCarsMeasureData {
   price?: number;
 }
 
-/** Parses every `data-measure-data-value="[...]"` card attribute on the page
- * into a map of sourceId -> {year, mileageKm, powerKw}, so it can be joined
- * onto the ld+json items (which don't carry those fields). */
-function parseMeasureDataById(
-  $: cheerio.CheerioAPI
-): Map<string, { year: number | null; mileageKm: number | null; powerKw: number | null }> {
-  const map = new Map<string, { year: number | null; mileageKm: number | null; powerKw: number | null }>();
-  $("[data-measure-data-value]").each((_, el) => {
-    const raw = $(el).attr("data-measure-data-value");
-    if (!raw) return;
-    let arr: unknown;
-    try {
-      arr = JSON.parse(raw);
-    } catch {
-      return;
-    }
-    if (!Array.isArray(arr) || arr[0] !== "advertise") return;
-    const data = arr[1] as TipCarsMeasureData | undefined;
-    if (!data?.id) return;
-    const year = data.made_year != null ? Number(data.made_year) : null;
-    map.set(data.id, {
-      year: Number.isFinite(year) ? year : null,
-      mileageKm: data.odometer ?? null,
-      powerKw: data.engine_power ?? null,
-    });
-  });
-  return map;
+function parseMeasureData(
+  raw: string | undefined
+): { year: number | null; mileageKm: number | null; powerKw: number | null } | null {
+  if (!raw) return null;
+  let arr: unknown;
+  try {
+    arr = JSON.parse(raw);
+  } catch {
+    return null;
+  }
+  if (!Array.isArray(arr) || arr[0] !== "advertise") return null;
+  const data = arr[1] as TipCarsMeasureData | undefined;
+  if (!data) return null;
+  const year = data.made_year != null ? Number(data.made_year) : null;
+  return {
+    year: Number.isFinite(year) ? year : null,
+    mileageKm: typeof data.odometer === "number" ? data.odometer : null,
+    powerKw: typeof data.engine_power === "number" ? data.engine_power : null,
+  };
 }
 
 export function parseTipCarsHtml(html: string): RawListing[] {
   const $ = cheerio.load(html);
-  const measureById = parseMeasureDataById($);
   const out: RawListing[] = [];
+  const seenIds = new Set<string>();
 
-  $('script[type="application/ld+json"]').each((_, el) => {
-    let json: unknown;
-    try {
-      json = JSON.parse($(el).contents().text());
-    } catch {
-      return;
+  $("[data-listing-item-id-value]").each((_, el) => {
+    const $el = $(el);
+    const id = $el.attr("data-listing-item-id-value");
+    if (!id || seenIds.has(id)) return;
+    seenIds.add(id);
+
+    const href = $el.find('a[href$=".html"]').first().attr("href");
+    if (!href) return;
+    const url = href.startsWith("http") ? href : `${BASE_URL}${href}`;
+    const hrefMatch = LISTING_HREF_RE.exec(href);
+    const makeModelSlug = hrefMatch?.[1] ?? null;
+    const body = hrefMatch?.[2] ?? null;
+    const fuelSlug = hrefMatch?.[3] ?? null;
+
+    const title = $el.find(".advertisement-name__title h3").first().text().trim().replace(/\s+/g, " ");
+    if (!title) return;
+    const variant = $el.find(".advertisement-name__title p").first().text().trim() || null;
+    // The price block can carry a second, smaller "<price> bez DPH" (VAT-excl.)
+    // line for dealer listings — read only the main <h3> price, not the
+    // whole section's text (which would concatenate both numbers into one).
+    const price = parseCzNumber($el.find(".advertisement-name__price h3").first().text());
+
+    let fuelText = "";
+    let transmissionText = "";
+    let year: number | null = null;
+    let mileageKm: number | null = null;
+    let powerKw: number | null = null;
+    $el.find(".detail-box-S").each((__, boxEl) => {
+      const $box = $(boxEl);
+      const label = $box.attr("title") ?? "";
+      const value = $box.find(".detail-box-S__text").first().text().trim();
+      if (label.startsWith("Palivo")) fuelText = value;
+      else if (label.startsWith("Převodovka")) transmissionText = value;
+      else if (label.startsWith("V provozu") || label.startsWith("Rok výroby")) {
+        year = /^\d{4}$/.test(value) ? Number(value) : null;
+      } else if (label.startsWith("Tachometr")) mileageKm = parseCzNumber(value);
+      else if (label.startsWith("Výkon")) powerKw = parseCzNumber(value);
+    });
+
+    const measured = parseMeasureData($el.attr("data-measure-data-value"));
+    if (year == null) year = measured?.year ?? null;
+    if (mileageKm == null) mileageKm = measured?.mileageKm ?? null;
+    if (powerKw == null) powerKw = measured?.powerKw ?? null;
+
+    let make: string | null = null;
+    let model: string | null = null;
+    if (makeModelSlug) {
+      const split = splitMakeModelSlug(makeModelSlug);
+      if (isKnownMakeSlug(normalizeMake(split.make))) {
+        make = split.make;
+        model = split.model;
+      }
     }
-    const doc = json as { "@type"?: string; itemListElement?: unknown };
-    if (doc?.["@type"] !== "ItemList" || !doc.itemListElement) return;
-
-    const raw = doc.itemListElement;
-    const items: TipCarsItemListItem[] = Array.isArray(raw)
-      ? (raw as TipCarsItemListItem[])
-      : Object.values(raw as Record<string, TipCarsItemListItem>);
-
-    for (const entry of items) {
-      const it = entry?.item;
-      if (!it) continue;
-      const url = it.url ?? it["@id"];
-      if (!url) continue;
-      const m = LISTING_URL_RE.exec(url);
-      if (!m) continue;
-      const [, makeModelSlug, body, fuel, idStr] = m;
-      if (!makeModelSlug || !body || !fuel || !idStr) continue;
-      const { make, model } = splitMakeModelSlug(makeModelSlug);
-      const measured = measureById.get(idStr);
-
-      out.push({
-        sourceId: idStr,
-        url,
-        title: it.name ?? "",
-        make,
-        model,
-        variant: null,
-        year: measured?.year ?? null,
-        mileageKm: measured?.mileageKm ?? null,
-        price: it.offers?.price ?? null,
-        currency: "CZK",
-        fuel,
-        transmission: null,
-        powerKw: measured?.powerKw ?? null,
-        body,
-        color: null,
-        location: null,
-        country: "CZ",
-        sellerType: "unknown",
-        vin: null,
-        imageUrls: it.image ? [it.image] : [],
-      });
+    if (!make) {
+      // The URL's leading path segment wasn't a recognized make (e.g. a
+      // "uzitkove" commercial-vehicle category slug) — fall back to
+      // inferring make/model from the title text instead.
+      const inferred = inferMakeModel(title);
+      make = inferred.make;
+      model = inferred.model;
     }
+
+    out.push({
+      sourceId: id,
+      url,
+      title,
+      make,
+      model,
+      variant,
+      year,
+      mileageKm,
+      price,
+      currency: "CZK",
+      fuel: guessFuel(fuelText) || (fuelSlug ? guessFuel(fuelSlug) : null),
+      transmission: guessTransmission(transmissionText),
+      powerKw,
+      body,
+      color: null,
+      location: null,
+      country: "CZ",
+      sellerType: "unknown",
+      vin: null,
+      imageUrls: [],
+    });
   });
 
   return out;

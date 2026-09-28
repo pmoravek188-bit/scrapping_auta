@@ -15,31 +15,26 @@ const baseQuery: SearchQuery = {
   sources: [],
 };
 
-/** Builds a minimal but structurally-real listing page: an ld+json ItemList
- * (id/url/name/price) plus a data-measure-data-value card per item
- * (year/mileage/power), exactly like the live site. */
+/** Builds a minimal but structurally-real listing page: one card per id,
+ * each carrying a data-measure-data-value attribute (year/mileage/power)
+ * and a detail link, exactly like the live site (no ld+json ItemList — the
+ * site dropped that from search pages). */
 function makePage(ids: string[]): string {
-  const items = ids.map((id, i) => ({
-    "@type": "ListItem",
-    position: i + 1,
-    item: {
-      "@type": "Product",
-      url: `https://www.tipcars.com/skoda-octavia/kombi/nafta/skoda-octavia-${id}.html`,
-      name: `Škoda Octavia ${id}`,
-      image: "https://g.tipcars.com/img.jpg",
-      offers: { "@type": "Offer", price: 100000, priceCurrency: "CZK" },
-    },
-  }));
   const cards = ids
     .map(
-      (id) =>
-        `<div data-measure-data-value="[&quot;advertise&quot;,{&quot;id&quot;:&quot;${id}&quot;,&quot;made_year&quot;:&quot;2019&quot;,&quot;engine_power&quot;:90,&quot;odometer&quot;:100000},&quot;h&quot;]"></div>`
+      (id) => `
+<div class="advertisement" data-listing-item-id-value="${id}"
+     data-measure-data-value="[&quot;advertise&quot;,{&quot;id&quot;:&quot;${id}&quot;,&quot;made_year&quot;:&quot;2019&quot;,&quot;engine_power&quot;:90,&quot;odometer&quot;:100000},&quot;h&quot;]">
+    <section class="advertisement-name">
+        <section class="advertisement-name__title">
+            <a href="/skoda-octavia/kombi/nafta/skoda-octavia-${id}.html"><h3>Škoda Octavia</h3></a>
+        </section>
+        <section class="advertisement-name__price"><h3>100 000 Kč</h3></section>
+    </section>
+</div>`
     )
     .join("\n");
-  return `<!DOCTYPE html><html><head><script type="application/ld+json">${JSON.stringify({
-    "@type": "ItemList",
-    itemListElement: items,
-  })}</script></head><body>${cards}</body></html>`;
+  return `<!DOCTYPE html><html><head></head><body>${cards}</body></html>`;
 }
 
 describe("tipcars adapter", () => {
@@ -58,7 +53,7 @@ describe("tipcars adapter", () => {
     expect(url).toBe("https://www.tipcars.com/ojete/land-rover-discovery?str=1-20");
   });
 
-  it("parses listings from the embedded ItemList JSON-LD, with year/mileage/power joined from data-measure-data-value", () => {
+  it("parses listings straight from the rendered cards (no ld+json ItemList on the live site anymore), with detail-box-S values for year/mileage/power/fuel/transmission", () => {
     const items = parseTipCarsHtml(fixture);
     expect(items).toHaveLength(3);
 
@@ -67,7 +62,8 @@ describe("tipcars adapter", () => {
       make: "skoda",
       model: "octavia",
       body: "liftback",
-      fuel: "benzin",
+      fuel: "petrol",
+      transmission: "automatic",
       price: 240000,
       year: 2015,
       mileageKm: 108321,
@@ -77,18 +73,29 @@ describe("tipcars adapter", () => {
       "https://www.tipcars.com/skoda-octavia/liftback/benzin/skoda-octavia-1-8tsi-cr-at-bixen-autoac-6611462.html"
     );
 
-    // multi-word model slug handled without splitting off part of the make
-    expect(items[2]).toMatchObject({
-      sourceId: "55290129",
-      make: "bmw",
-      model: "rada-3",
-      year: 2008,
-      mileageKm: 290148,
-      powerKw: 225,
+    expect(items[1]).toMatchObject({
+      sourceId: "47710005",
+      make: "skoda",
+      model: "octavia",
+      fuel: "diesel",
+      transmission: "manual",
+      year: 2005,
+      mileageKm: 209648,
+      powerKw: 77,
     });
   });
 
-  it("returns an empty array when there's no ItemList JSON-LD", () => {
+  it("falls back to inferring make/model from the title when the URL's leading segment is a mis-parsed category (e.g. 'uzitkove'), and to data-measure-data-value when there are no detail-box-S rows", () => {
+    const items = parseTipCarsHtml(fixture);
+    const small = items.find((i) => i.sourceId === "55290129");
+    expect(small).toBeDefined();
+    expect(small?.make).toBe("bmw");
+    expect(small?.year).toBe(2008);
+    expect(small?.mileageKm).toBe(290148);
+    expect(small?.powerKw).toBe(225);
+  });
+
+  it("returns an empty array when there are no listing cards", () => {
     expect(parseTipCarsHtml("<html><body>no data</body></html>")).toEqual([]);
   });
 });

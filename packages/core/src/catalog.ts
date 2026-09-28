@@ -52,6 +52,7 @@ const RAW_MAKES: MakeOption[] = [
   { slug: "lexus", label: "Lexus" },
   { slug: "subaru", label: "Subaru" },
   { slug: "chevrolet", label: "Chevrolet" },
+  { slug: "cupra", label: "Cupra" },
 ];
 
 export const MAKES: MakeOption[] = RAW_MAKES.map((m) => ({
@@ -279,6 +280,12 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["aveo", "Aveo"],
     ["cruze", "Cruze"],
     ["spark", "Spark"],
+  ]),
+  cupra: models("cupra", [
+    ["formentor", "Formentor"],
+    ["leon", "Leon"],
+    ["ateca", "Ateca"],
+    ["born", "Born"],
   ]),
 };
 

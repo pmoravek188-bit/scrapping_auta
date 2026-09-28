@@ -98,6 +98,21 @@ const TRANSMISSION_KEY_TO_CANONICAL: Record<string, string> = {
   TRANSMISSION_MANUAL: "manual",
   TRANSMISSION_AUTOMATIC: "automatic",
 };
+// Confirmed live in `catalog_features`: DRIVE_4X4 / DRIVE_4X2 (front/rear,
+// not distinguished at this level). Only the unambiguous 4x4 case is mapped
+// to our DriveType — DRIVE_4X2 is deliberately left unmapped (null) rather
+// than guessed as fwd/rwd.
+const DRIVE_KEY_TO_CANONICAL: Record<string, string> = {
+  DRIVE_4X4: "awd",
+};
+// A handful of catalog_features FEATURE_* keys map directly onto our
+// equipment chip groups (see @scrapping-auta/core's FEATURE_GROUPS) — passed
+// through as free text via `equipment` so the matcher's title/variant/
+// equipment token search picks them up without needing a 1:1 id mapping.
+const FEATURE_KEY_TO_LABEL: Record<string, string> = {
+  FEATURE_TRAILERCOUPLING: "tažné zařízení",
+  FEATURE_THIRD_ROW_SEATS: "7 míst",
+};
 
 export function buildCarvagoUrl(query: SearchQuery, page: number): string {
   let path = "/cs/auta";
@@ -193,6 +208,10 @@ export function parseCarvagoHtml(html: string): RawListing[] {
     if (car.id == null || !car.slug) continue;
     const year = yearFromDate(car.registration_date) ?? yearFromDate(car.manufacture_date);
     const sellerConstKey = car.seller?.type?.const_key ?? "";
+    const drive = pickFeature(car.catalog_features, DRIVE_KEY_TO_CANONICAL);
+    const equipment = (car.catalog_features ?? [])
+      .map((f) => (f.const_key ? FEATURE_KEY_TO_LABEL[f.const_key] : undefined))
+      .filter((label): label is string => Boolean(label));
     out.push({
       sourceId: String(car.id),
       url: `${BASE_URL}/cs/auto/${car.id}/${car.slug}`,
@@ -214,6 +233,8 @@ export function parseCarvagoHtml(html: string): RawListing[] {
       sellerType: sellerConstKey.includes("DEALER") ? "dealer" : "unknown",
       vin: car.vin ?? null,
       imageUrls: car.main_image ? [car.main_image] : [],
+      drive,
+      equipment,
     });
   }
   return out;
