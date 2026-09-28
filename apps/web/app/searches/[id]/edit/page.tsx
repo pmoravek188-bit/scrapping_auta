@@ -1,4 +1,5 @@
 import { notFound } from "next/navigation";
+import { mergeMakeModelCatalog, mergeMakes, normalizeMake, normalizeModel } from "@scrapping-auta/core";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { NotConfigured } from "@/components/not-configured";
 import { SearchForm, type SearchFormValues } from "@/components/search-form";
@@ -10,9 +11,10 @@ export default async function EditSearchPage({ params }: { params: Promise<{ id:
   const supabase = await createSupabaseServerClient();
   if (!supabase) return <NotConfigured />;
 
-  const [{ data: search }, { data: sources }] = await Promise.all([
+  const [{ data: search }, { data: sources }, { data: makeModelRows }] = await Promise.all([
     supabase.from("searches").select("*").eq("id", id).maybeSingle(),
-    supabase.from("sources").select("id, name").eq("enabled", true),
+    supabase.from("sources").select("id, name").eq("enabled", true).order("name"),
+    supabase.from("make_models").select("make, model, listing_count"),
   ]);
 
   if (!search) notFound();
@@ -20,8 +22,13 @@ export default async function EditSearchPage({ params }: { params: Promise<{ id:
   const initial: SearchFormValues = {
     id: search.id,
     name: search.name,
-    make: search.make ?? "",
-    model: search.model ?? "",
+    // Legacy free-text saves (before filters became selects) could contain
+    // untrimmed/unnormalized values (e.g. "ford ", "tourneo custom") that
+    // wouldn't match any option or the scraper's normalized listings —
+    // normalize on load so the select pre-selects correctly and re-saving
+    // fixes the stored row too.
+    make: normalizeMake(search.make) ?? "",
+    model: normalizeModel(search.model) ?? "",
     year_from: search.year_from?.toString() ?? "",
     year_to: search.year_to?.toString() ?? "",
     price_from: search.price_from?.toString() ?? "",
@@ -40,8 +47,13 @@ export default async function EditSearchPage({ params }: { params: Promise<{ id:
 
   return (
     <div className="max-w-2xl">
-      <h1 className="mb-4 text-xl font-semibold">Upravit hledání</h1>
-      <SearchForm initial={initial} availableSources={sources ?? []} />
+      <h1 className="mb-4 text-2xl font-bold text-gray-900">Upravit hledání</h1>
+      <SearchForm
+        initial={initial}
+        availableSources={sources ?? []}
+        makes={mergeMakes(makeModelRows ?? [])}
+        makeModels={mergeMakeModelCatalog(makeModelRows ?? [])}
+      />
     </div>
   );
 }

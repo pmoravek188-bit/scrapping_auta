@@ -3,6 +3,8 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { useState } from "react";
+import { Search, Pencil, Trash2, Power } from "lucide-react";
+import clsx from "clsx";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { formatCzk } from "@/lib/format";
 
@@ -46,12 +48,17 @@ export function SearchListItem({ search }: { search: SearchRow }) {
     <div className="card flex flex-wrap items-center justify-between gap-3">
       <div>
         <div className="flex items-center gap-2">
-          <Link href={`/results?search=${search.id}`} className="font-semibold hover:underline">
+          <Link href={`/results?search=${search.id}`} className="font-semibold text-gray-900 hover:text-brand-700">
             {search.name}
           </Link>
-          {!enabled && (
-            <span className="rounded bg-gray-100 px-2 py-0.5 text-xs text-gray-500">vypnuto</span>
-          )}
+          <span
+            className={clsx(
+              "badge",
+              enabled ? "bg-emerald-50 text-emerald-700" : "bg-gray-100 text-gray-500"
+            )}
+          >
+            {enabled ? "aktivní" : "vypnuto"}
+          </span>
         </div>
         <div className="mt-1 text-xs text-gray-500">
           {[
@@ -68,17 +75,21 @@ export function SearchListItem({ search }: { search: SearchRow }) {
             .join(" · ") || "bez filtrů"}
         </div>
       </div>
-      <div className="flex items-center gap-2">
+      <div className="flex flex-wrap items-center gap-2">
         <Link href={`/results?search=${search.id}`} className="btn-secondary">
+          <Search className="h-3.5 w-3.5" aria-hidden />
           Výsledky
         </Link>
         <Link href={`/searches/${search.id}/edit`} className="btn-secondary">
+          <Pencil className="h-3.5 w-3.5" aria-hidden />
           Upravit
         </Link>
         <button className="btn-secondary" disabled={busy} onClick={toggle}>
+          <Power className="h-3.5 w-3.5" aria-hidden />
           {enabled ? "Vypnout" : "Zapnout"}
         </button>
-        <button className="btn-secondary text-red-600" disabled={busy} onClick={remove}>
+        <button className="btn-secondary text-red-600 hover:bg-red-50" disabled={busy} onClick={remove}>
+          <Trash2 className="h-3.5 w-3.5" aria-hidden />
           Smazat
         </button>
       </div>

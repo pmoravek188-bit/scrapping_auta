@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Plus } from "lucide-react";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { NotConfigured } from "@/components/not-configured";
 import { SearchListItem, type SearchRow } from "./search-list-item";
@@ -18,10 +19,14 @@ export default async function SearchesPage() {
 
   return (
     <div>
-      <div className="mb-4 flex items-center justify-between">
-        <h1 className="text-xl font-semibold">Moje hledání</h1>
+      <div className="mb-5 flex items-center justify-between">
+        <div>
+          <h1 className="text-2xl font-bold text-gray-900">Moje hledání</h1>
+          <p className="text-sm text-gray-500">Uložené filtry, podle kterých scraper hlídá nové nabídky.</p>
+        </div>
         <Link href="/searches/new" className="btn">
-          + Nové hledání
+          <Plus className="h-4 w-4" aria-hidden />
+          Nové hledání
         </Link>
       </div>
 

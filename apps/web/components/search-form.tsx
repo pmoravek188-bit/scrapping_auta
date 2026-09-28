@@ -1,7 +1,8 @@
 "use client";
 
 import { useRouter } from "next/navigation";
-import { useState } from "react";
+import { useMemo, useState } from "react";
+import { ChevronDown } from "lucide-react";
 import {
   BODY_TYPES,
   FUEL_TYPES,
@@ -9,9 +10,26 @@ import {
   type BodyType,
   type FuelType,
   type TransmissionType,
+  type MakeOption,
+  type ModelOption,
+  prettifyModelSlug,
+  normalizeMake,
+  normalizeModel,
 } from "@scrapping-auta/core";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { BODY_LABELS, FUEL_LABELS, TRANSMISSION_LABELS } from "@/lib/format";
+import { FUEL_ICONS, BODY_ICONS, TRANSMISSION_ICONS } from "@/lib/icons";
+import {
+  PRICE_STEPS,
+  YEAR_STEPS,
+  MILEAGE_STEPS,
+  POWER_STEPS,
+  formatPriceStep,
+  formatMileageStep,
+  formatPowerStep,
+} from "@/lib/filter-options";
+import { Chip } from "@/components/chip";
+import { TagInput } from "@/components/tag-input";
 
 export interface SearchFormValues {
   id?: string;
@@ -70,14 +88,42 @@ function toList(value: string): string[] {
 export function SearchForm({
   initial,
   availableSources,
+  makes,
+  makeModels,
 }: {
   initial: SearchFormValues;
   availableSources: { id: string; name: string }[];
+  makes: MakeOption[];
+  makeModels: Record<string, ModelOption[]>;
 }) {
   const router = useRouter();
   const [values, setValues] = useState<SearchFormValues>(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [keywordTags, setKeywordTags] = useState<string[]>(toList(initial.keywords));
+  const [excludeTags, setExcludeTags] = useState<string[]>(toList(initial.exclude_keywords));
+  const [moreOpen, setMoreOpen] = useState(
+    keywordTags.length > 0 || excludeTags.length > 0
+  );
+
+  const makeOptions = useMemo<MakeOption[]>(() => {
+    if (values.make && !makes.some((m) => m.slug === values.make)) {
+      return [...makes, { slug: values.make, label: prettifyModelSlug(values.make) }].sort(
+        (a, b) => a.label.localeCompare(b.label, "cs")
+      );
+    }
+    return makes;
+  }, [values.make, makes]);
+
+  const modelOptions = useMemo<ModelOption[]>(() => {
+    const list = values.make ? (makeModels[values.make] ?? []) : [];
+    if (values.model && !list.some((m) => m.slug === values.model)) {
+      return [...list, { slug: values.model, label: prettifyModelSlug(values.model) }].sort(
+        (a, b) => a.label.localeCompare(b.label, "cs")
+      );
+    }
+    return list;
+  }, [values.make, values.model, makeModels]);
 
   function toggleArrayValue<T extends string>(field: "fuel" | "body" | "sources", value: T) {
     setValues((prev) => {
@@ -107,8 +153,8 @@ export function SearchForm({
       user_id: user.id,
       name: values.name || "Bez názvu",
       enabled: values.enabled,
-      make: values.make || null,
-      model: values.model || null,
+      make: values.make ? normalizeMake(values.make) : null,
+      model: values.model ? normalizeModel(values.model) : null,
       year_from: toIntOrNull(values.year_from),
       year_to: toIntOrNull(values.year_to),
       price_from: toIntOrNull(values.price_from),
@@ -118,8 +164,8 @@ export function SearchForm({
       transmission: values.transmission || null,
       body: values.body,
       power_min_kw: toIntOrNull(values.power_min_kw),
-      keywords: toList(values.keywords),
-      exclude_keywords: toList(values.exclude_keywords),
+      keywords: keywordTags,
+      exclude_keywords: excludeTags,
       sources: values.sources,
       notify: values.notify,
     };
@@ -138,10 +184,10 @@ export function SearchForm({
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-6">
+    <form onSubmit={handleSubmit} className="space-y-5">
       {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
-      <div className="card space-y-3">
+      <div className="card space-y-4">
         <div>
           <label className="label">Název hledání</label>
           <input
@@ -154,42 +200,97 @@ export function SearchForm({
         </div>
         <div className="grid grid-cols-2 gap-3">
           <div>
-            <label className="label">Značka (slug)</label>
-            <input
+            <label className="label">Značka</label>
+            <select
               className="input"
               value={values.make}
-              onChange={(e) => setValues((v) => ({ ...v, make: e.target.value }))}
-              placeholder="skoda"
-            />
+              onChange={(e) => setValues((v) => ({ ...v, make: e.target.value, model: "" }))}
+            >
+              <option value="">Všechny značky</option>
+              {makeOptions.map((m) => (
+                <option key={m.slug} value={m.slug}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
           </div>
           <div>
-            <label className="label">Model (slug)</label>
-            <input
+            <label className="label">Model</label>
+            <select
               className="input"
               value={values.model}
+              disabled={!values.make}
               onChange={(e) => setValues((v) => ({ ...v, model: e.target.value }))}
-              placeholder="octavia"
-            />
+            >
+              <option value="">{values.make ? "Všechny modely" : "Nejprve vyberte značku"}</option>
+              {modelOptions.map((m) => (
+                <option key={m.slug} value={m.slug}>
+                  {m.label}
+                </option>
+              ))}
+            </select>
           </div>
         </div>
       </div>
 
-      <div className="card space-y-3">
-        <h2 className="text-sm font-semibold text-gray-700">Rok, cena, nájezd</h2>
+      <div className="card space-y-4">
+        <h2 className="section-title">Rok, cena, nájezd, výkon</h2>
         <div className="grid grid-cols-2 gap-3 sm:grid-cols-4">
-          <NumberField label="Rok od" value={values.year_from} onChange={(v) => setValues((s) => ({ ...s, year_from: v }))} />
-          <NumberField label="Rok do" value={values.year_to} onChange={(v) => setValues((s) => ({ ...s, year_to: v }))} />
-          <NumberField label="Cena od (Kč)" value={values.price_from} onChange={(v) => setValues((s) => ({ ...s, price_from: v }))} />
-          <NumberField label="Cena do (Kč)" value={values.price_to} onChange={(v) => setValues((s) => ({ ...s, price_to: v }))} />
+          <StepSelect
+            label="Rok od"
+            value={values.year_from}
+            onChange={(v) => setValues((s) => ({ ...s, year_from: v }))}
+            options={YEAR_STEPS}
+            format={(v) => String(v)}
+            placeholder="Neomezeno"
+          />
+          <StepSelect
+            label="Rok do"
+            value={values.year_to}
+            onChange={(v) => setValues((s) => ({ ...s, year_to: v }))}
+            options={YEAR_STEPS}
+            format={(v) => String(v)}
+            placeholder="Neomezeno"
+          />
+          <StepSelect
+            label="Cena od"
+            value={values.price_from}
+            onChange={(v) => setValues((s) => ({ ...s, price_from: v }))}
+            options={PRICE_STEPS}
+            format={formatPriceStep}
+            placeholder="Neomezeno"
+          />
+          <StepSelect
+            label="Cena do"
+            value={values.price_to}
+            onChange={(v) => setValues((s) => ({ ...s, price_to: v }))}
+            options={PRICE_STEPS}
+            format={formatPriceStep}
+            placeholder="Neomezeno"
+          />
         </div>
         <div className="grid grid-cols-2 gap-3">
-          <NumberField label="Max. nájezd (km)" value={values.mileage_max} onChange={(v) => setValues((s) => ({ ...s, mileage_max: v }))} />
-          <NumberField label="Min. výkon (kW)" value={values.power_min_kw} onChange={(v) => setValues((s) => ({ ...s, power_min_kw: v }))} />
+          <StepSelect
+            label="Nájezd do"
+            value={values.mileage_max}
+            onChange={(v) => setValues((s) => ({ ...s, mileage_max: v }))}
+            options={MILEAGE_STEPS}
+            format={formatMileageStep}
+            placeholder="Neomezeno"
+          />
+          <StepSelect
+            label="Výkon od"
+            value={values.power_min_kw}
+            onChange={(v) => setValues((s) => ({ ...s, power_min_kw: v }))}
+            options={POWER_STEPS}
+            format={formatPowerStep}
+            placeholder="Neomezeno"
+          />
         </div>
       </div>
 
-      <div className="card space-y-3">
-        <h2 className="text-sm font-semibold text-gray-700">Palivo, převodovka, karoserie</h2>
+      <div className="card space-y-4">
+        <h2 className="section-title">Palivo, karoserie, převodovka</h2>
         <div>
           <label className="label">Palivo</label>
           <div className="flex flex-wrap gap-2">
@@ -199,26 +300,10 @@ export function SearchForm({
                 active={values.fuel.includes(f)}
                 onClick={() => toggleArrayValue("fuel", f)}
                 label={FUEL_LABELS[f] ?? f}
+                icon={FUEL_ICONS[f]}
               />
             ))}
           </div>
-        </div>
-        <div>
-          <label className="label">Převodovka</label>
-          <select
-            className="input"
-            value={values.transmission}
-            onChange={(e) =>
-              setValues((v) => ({ ...v, transmission: e.target.value as TransmissionType | "" }))
-            }
-          >
-            <option value="">Nerozhoduje</option>
-            {TRANSMISSION_TYPES.map((t) => (
-              <option key={t} value={t}>
-                {TRANSMISSION_LABELS[t] ?? t}
-              </option>
-            ))}
-          </select>
         </div>
         <div>
           <label className="label">Karoserie</label>
@@ -229,6 +314,26 @@ export function SearchForm({
                 active={values.body.includes(b)}
                 onClick={() => toggleArrayValue("body", b)}
                 label={BODY_LABELS[b] ?? b}
+                icon={BODY_ICONS[b]}
+              />
+            ))}
+          </div>
+        </div>
+        <div>
+          <label className="label">Převodovka</label>
+          <div className="flex flex-wrap gap-2">
+            <Chip
+              active={values.transmission === ""}
+              onClick={() => setValues((v) => ({ ...v, transmission: "" }))}
+              label="Nerozhoduje"
+            />
+            {TRANSMISSION_TYPES.map((t) => (
+              <Chip
+                key={t}
+                active={values.transmission === t}
+                onClick={() => setValues((v) => ({ ...v, transmission: t }))}
+                label={TRANSMISSION_LABELS[t] ?? t}
+                icon={TRANSMISSION_ICONS[t]}
               />
             ))}
           </div>
@@ -236,29 +341,7 @@ export function SearchForm({
       </div>
 
       <div className="card space-y-3">
-        <h2 className="text-sm font-semibold text-gray-700">Klíčová slova</h2>
-        <div>
-          <label className="label">Musí obsahovat (oddělte čárkou)</label>
-          <input
-            className="input"
-            value={values.keywords}
-            onChange={(e) => setValues((v) => ({ ...v, keywords: e.target.value }))}
-            placeholder="nehavarovaná, servisní kniha"
-          />
-        </div>
-        <div>
-          <label className="label">Nesmí obsahovat (oddělte čárkou)</label>
-          <input
-            className="input"
-            value={values.exclude_keywords}
-            onChange={(e) => setValues((v) => ({ ...v, exclude_keywords: e.target.value }))}
-            placeholder="havarovaná, na náhradní díly"
-          />
-        </div>
-      </div>
-
-      <div className="card space-y-3">
-        <h2 className="text-sm font-semibold text-gray-700">Zdroje</h2>
+        <h2 className="section-title">Zdroje</h2>
         <p className="text-xs text-gray-500">Nic nezaškrtnuto = hledat na všech dostupných zdrojích.</p>
         <div className="flex flex-wrap gap-2">
           {availableSources.map((s) => (
@@ -272,15 +355,41 @@ export function SearchForm({
         </div>
       </div>
 
+      <div className="card">
+        <button
+          type="button"
+          onClick={() => setMoreOpen((v) => !v)}
+          className="flex w-full items-center justify-between text-left"
+        >
+          <span className="section-title">Další možnosti</span>
+          <ChevronDown
+            className={`h-4 w-4 text-gray-400 transition-transform ${moreOpen ? "rotate-180" : ""}`}
+          />
+        </button>
+        {moreOpen && (
+          <div className="mt-3 space-y-3">
+            <div>
+              <label className="label">Musí obsahovat</label>
+              <TagInput values={keywordTags} onChange={setKeywordTags} placeholder="např. nehavarovaná" />
+            </div>
+            <div>
+              <label className="label">Nesmí obsahovat</label>
+              <TagInput values={excludeTags} onChange={setExcludeTags} placeholder="např. havarovaná" />
+            </div>
+          </div>
+        )}
+      </div>
+
       <div className="card flex items-center justify-between">
-        <div>
-          <label className="label mb-0">Upozorňovat e-mailem na nové nabídky</label>
-        </div>
+        <label className="label mb-0" htmlFor="notify">
+          Upozorňovat e-mailem na nové nabídky
+        </label>
         <input
+          id="notify"
           type="checkbox"
           checked={values.notify}
           onChange={(e) => setValues((v) => ({ ...v, notify: e.target.checked }))}
-          className="h-5 w-5"
+          className="h-5 w-5 rounded border-gray-300 text-brand-600 focus:ring-brand-500"
         />
       </div>
 
@@ -296,40 +405,32 @@ export function SearchForm({
   );
 }
 
-function NumberField({
+function StepSelect({
   label,
   value,
   onChange,
+  options,
+  format,
+  placeholder,
 }: {
   label: string;
   value: string;
   onChange: (v: string) => void;
+  options: number[];
+  format: (v: number) => string;
+  placeholder: string;
 }) {
   return (
     <div>
       <label className="label">{label}</label>
-      <input
-        type="number"
-        className="input"
-        value={value}
-        onChange={(e) => onChange(e.target.value)}
-      />
+      <select className="input" value={value} onChange={(e) => onChange(e.target.value)}>
+        <option value="">{placeholder}</option>
+        {options.map((o) => (
+          <option key={o} value={o}>
+            {format(o)}
+          </option>
+        ))}
+      </select>
     </div>
-  );
-}
-
-function Chip({ active, onClick, label }: { active: boolean; onClick: () => void; label: string }) {
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      className={`rounded-full border px-3 py-1 text-xs font-medium transition ${
-        active
-          ? "border-brand-500 bg-brand-50 text-brand-700"
-          : "border-gray-300 bg-white text-gray-600 hover:bg-gray-50"
-      }`}
-    >
-      {label}
-    </button>
   );
 }

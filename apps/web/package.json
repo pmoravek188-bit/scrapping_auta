@@ -14,6 +14,8 @@
     "@scrapping-auta/core": "workspace:*",
     "@supabase/ssr": "^0.12.7",
     "@supabase/supabase-js": "^2.45.4",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.454.0",
     "next": "^15.0.2",
     "react": "^18.3.1",
     "react-dom": "^18.3.1"

@@ -152,7 +152,16 @@ export interface Database {
         Relationships: [];
       };
     };
-    Views: Record<string, never>;
+    Views: {
+      make_models: {
+        Row: {
+          make: string | null;
+          model: string | null;
+          listing_count: number | null;
+        };
+        Relationships: [];
+      };
+    };
     Functions: Record<string, never>;
     Enums: Record<string, never>;
   };

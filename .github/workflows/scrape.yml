@@ -1,5 +1,9 @@
 name: Scrape
 
+concurrency:
+  group: scrape
+  cancel-in-progress: false
+
 on:
   schedule:
     # Every 30 minutes. Also keeps the Supabase free-tier project active.

@@ -2,6 +2,7 @@
 
 import { Suspense, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { Car, Mail } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 import { isSupabaseConfigured } from "@/lib/supabase/config";
 
@@ -30,6 +31,20 @@ export default function LoginPage() {
   );
 }
 
+function LoginShell({ children }: { children: React.ReactNode }) {
+  return (
+    <div className="flex min-h-screen items-center justify-center bg-gradient-to-b from-brand-50 to-gray-100 px-4">
+      <div className="w-full max-w-md">
+        <div className="mb-6 flex items-center justify-center gap-2 text-xl font-bold text-gray-900">
+          <Car className="h-7 w-7 text-brand-600" aria-hidden />
+          Scrapping auta
+        </div>
+        {children}
+      </div>
+    </div>
+  );
+}
+
 function LoginForm() {
   const searchParams = useSearchParams();
   const callbackError = searchParams.get("error");
@@ -46,12 +61,14 @@ function LoginForm() {
 
   if (!isSupabaseConfigured()) {
     return (
-      <div className="mx-auto mt-16 max-w-md card">
-        <h1 className="mb-2 text-lg font-semibold">Aplikace není nakonfigurovaná</h1>
-        <p className="text-sm text-gray-600">
-          Chybí proměnné prostředí NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY.
-        </p>
-      </div>
+      <LoginShell>
+        <div className="card">
+          <h1 className="mb-2 text-lg font-semibold">Aplikace není nakonfigurovaná</h1>
+          <p className="text-sm text-gray-600">
+            Chybí proměnné prostředí NEXT_PUBLIC_SUPABASE_URL / NEXT_PUBLIC_SUPABASE_ANON_KEY.
+          </p>
+        </div>
+      </LoginShell>
     );
   }
 
@@ -95,15 +112,16 @@ function LoginForm() {
   }
 
   return (
-    <div className="mx-auto mt-16 max-w-md">
+    <LoginShell>
       <div className="card">
-        <h1 className="mb-1 text-lg font-semibold">Přihlášení</h1>
+        <h1 className="mb-1 text-lg font-semibold text-gray-900">Přihlášení</h1>
         <p className="mb-4 text-sm text-gray-600">
           Zadejte e-mail a pošleme vám přihlašovací odkaz (magic link).
         </p>
         {status === "sent" ? (
           <div className="space-y-4">
-            <p className="rounded-lg bg-brand-50 p-3 text-sm text-brand-700">
+            <p className="flex items-start gap-2 rounded-lg bg-brand-50 p-3 text-sm text-brand-700">
+              <Mail className="mt-0.5 h-4 w-4 flex-shrink-0" aria-hidden />
               Odkaz byl odeslán na <strong>{email}</strong>. Zkontrolujte si e-mail.
             </p>
             <form onSubmit={handleVerifyOtp} className="space-y-3">
@@ -158,6 +176,6 @@ function LoginForm() {
           </form>
         )}
       </div>
-    </div>
+    </LoginShell>
   );
 }

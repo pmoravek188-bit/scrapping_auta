@@ -27,12 +27,20 @@ export function PriceHistoryChart({ points }: { points: PricePoint[] }) {
   });
 
   const path = points2d.map((p, i) => `${i === 0 ? "M" : "L"}${p.x.toFixed(1)},${p.y.toFixed(1)}`).join(" ");
+  const areaPath = `${path} L${points2d[points2d.length - 1]!.x.toFixed(1)},${height - padding} L${points2d[0]!.x.toFixed(1)},${height - padding} Z`;
 
   return (
     <svg viewBox={`0 0 ${width} ${height}`} className="w-full" role="img" aria-label="Historie ceny">
-      <path d={path} fill="none" stroke="#0a7d3b" strokeWidth={2} />
+      <defs>
+        <linearGradient id="price-history-fill" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0%" stopColor="#2f6cf5" stopOpacity="0.18" />
+          <stop offset="100%" stopColor="#2f6cf5" stopOpacity="0" />
+        </linearGradient>
+      </defs>
+      <path d={areaPath} fill="url(#price-history-fill)" stroke="none" />
+      <path d={path} fill="none" stroke="#2f6cf5" strokeWidth={2.5} strokeLinecap="round" strokeLinejoin="round" />
       {points2d.map((p, i) => (
-        <circle key={i} cx={p.x} cy={p.y} r={3} fill="#0a7d3b">
+        <circle key={i} cx={p.x} cy={p.y} r={3.5} fill="#fff" stroke="#2f6cf5" strokeWidth={2}>
           <title>
             {formatCzk(p.price_czk)} — {formatDate(p.seen_at)}
           </title>

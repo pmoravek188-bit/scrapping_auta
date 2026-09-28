@@ -106,8 +106,44 @@ supabase gen types typescript --project-id lhzfrzfutlzqysyuldtw > packages/core/
 3. Nastavte proměnné prostředí projektu:
    - `NEXT_PUBLIC_SUPABASE_URL`
    - `NEXT_PUBLIC_SUPABASE_ANON_KEY`
-4. Deploy. Vercel Hobby stačí — web je čistě čtecí/zápisové UI nad Supabase,
-   žádné vlastní API routy kromě `/auth/callback`.
+   - volitelně `GITHUB_DISPATCH_TOKEN`, `GITHUB_REPO`, `GITHUB_REF` — viz
+     „Ruční spuštění scraperu z webu“ níže; bez nich web dál funguje, jen
+     tlačítko „Spustit scraping“ zůstane neaktivní.
+4. Deploy. Vercel Hobby stačí — web je čistě čtecí/zápisové UI nad Supabase
+   plus jedna malá server-side route (`/api/scrape`) pro ruční spuštění
+   scraperu, kromě `/auth/callback`.
+
+## Ruční spuštění scraperu z webu
+
+Stránka „Zdroje“ (a přehled) má tlačítko **Spustit scraping**, které přes
+server-side route `apps/web/app/api/scrape/route.ts` zavolá GitHub REST API
+(`POST /repos/{repo}/actions/workflows/scrape.yml/dispatches`) a spustí
+workflow `scrape.yml` mimo pravidelný cron. Route vyžaduje přihlášeného
+uživatele (ověřeno přes Supabase session na serveru — middleware cestu
+`/api/*` nechrání, takže kontrola je uvnitř route) a token se nikdy neposílá
+do prohlížeče.
+
+Nastavení:
+
+1. Na GitHubu vytvořte **fine-grained personal access token** omezený jen na
+   repozitář `pmoravek188-bit/scrapping_auta`:
+   - **Settings → Developer settings → Personal access tokens → Fine-grained
+     tokens → Generate new token**
+   - **Repository access**: Only select repositories → vyberte tento repozitář
+   - **Permissions**: `Actions` → **Read and write**, `Metadata` → **Read**
+     (přidá se automaticky)
+2. V nastavení Vercel projektu (Environment Variables, prostředí
+   **Production**) přidejte:
+   - `GITHUB_DISPATCH_TOKEN` — vygenerovaný token z kroku 1 (server-only,
+     **ne** `NEXT_PUBLIC_*`)
+   - `GITHUB_REPO` — výchozí `pmoravek188-bit/scrapping_auta`, není nutné
+     nastavovat, pokud sedí
+   - `GITHUB_REF` — větev, na které se má `scrape.yml` spustit (výchozí
+     `claude/car-search-app-y4b753`)
+3. Redeploy. Tlačítko pak spustí scraping pro všechny zdroje nebo jen pro
+   vybraný, ukazuje stav běžícího workflow (dotazuje se každých ~10 s) a po
+   dokončení obnoví stránku. `scrape.yml` má `concurrency: group: scrape`,
+   takže se souběžné běhy nespouští — nový poběží až po dokončení předchozího.
 
 ## Nastavení GitHub Secrets (scraper)
 

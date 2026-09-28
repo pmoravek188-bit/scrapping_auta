@@ -1,5 +1,6 @@
 export * from "./enums.js";
 export * from "./make-model.js";
+export * from "./catalog.js";
 export * from "./currency.js";
 export * from "./schemas.js";
 export * from "./normalize.js";
