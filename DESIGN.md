@@ -1,176 +1,201 @@
 # Scrapping auta – návrh aplikace
 
-> Stav: **NÁVRH k odsouhlasení**. Implementaci provede další agent (Sonnet) podle tohoto dokumentu.
+> Stav: **NÁVRH v2 k odsouhlasení** (Supabase + Vercel, rozšířené zdroje).
+> Implementaci provede další agent (Sonnet) podle tohoto dokumentu.
 
 ## 1. Cíl
 
-Aplikace pravidelně prohledává největší autobazary podle hledání, která si zadám
-(značka, model, rok, cena, nájezd, palivo, převodovka…). Výsledky sjednotí do
-jednoho seznamu, odstraní duplicity, hlídá změny ceny a pošle upozornění na nové
-inzeráty, které odpovídají hledání.
+Aplikace pravidelně prohledává co nejvíce autobazarů a prodejců ojetin podle
+hledání, která si zadám (značka, model, rok, cena, nájezd, palivo, převodovka…).
+Výsledky sjednotí do jednoho seznamu, odstraní duplicity, hlídá změny ceny
+a pošle upozornění na nové / zlevněné inzeráty.
 
-## 2. Zdroje (bazary)
+## 2. Zdroje
 
-| Priorita | Bazar | Způsob získání dat | Poznámka |
-|---|---|---|---|
-| 1 | **Sauto.cz** | Interní JSON API, které volá jejich web | Největší v ČR, nejsnazší parsování |
-| 1 | **Bazoš.cz** (auto.bazos.cz) | HTML stránky | Jednoduché HTML, hodně soukromých prodejců |
-| 1 | **TipCars.com** | HTML stránky | Hodně dealerů |
-| 2 | **AutoScout24** (.cz / .de) | HTML + vložený JSON (`__NEXT_DATA__`) | Evropský trh |
-| 3 | **Mobile.de** | Playwright (prohlížeč) | Silná ochrana proti botům, jen volitelně |
-| 3 | **Autobazar.eu** (SK) | HTML | Volitelně |
+Každý zdroj = samostatný **adaptér** (jeden soubor). Před implementací adaptéru
+se u webu ověří, jestli frontend nevolá JSON API (skoro vždy rychlejší a
+stabilnější než parsovat HTML).
 
-Každý bazar je samostatný **adaptér**, takže přidání dalšího = jeden nový soubor.
+### Inzertní portály
+| Prio | Zdroj | Pozn. |
+|---|---|---|
+| 1 | **Sauto.cz** | Největší v ČR, interní JSON API |
+| 1 | **Bazoš.cz** (auto.bazos.cz) | HTML, hodně soukromníků |
+| 1 | **TipCars.com** | HTML, hodně dealerů |
+| 2 | **AutoScout24** (.cz/.de) | `__NEXT_DATA__` JSON |
+| 3 | **Mobile.de** | silná ochrana, Playwright, volitelně |
+| 3 | **Autobazar.eu** (SK) | HTML |
 
-**Pravidla slušného scrapingu:** max. ~1 požadavek za 2–5 s na doménu, náhodné
-zpoždění, respektovat `robots.txt`, stahovat jen výpisy a detail inzerátu,
-žádné obcházení přihlášení/captchy. Je to pro osobní použití.
+### Velcí prodejci ojetin
+| Prio | Zdroj | Pozn. |
+|---|---|---|
+| 1 | **Carvago** (carvago.com/cz) | velký EU sklad, JSON API |
+| 1 | **Das WeltAuto** (dasweltauto.cz) | certifikované vozy koncernu VW |
+| 1 | **AAA Auto** (aaaauto.cz) | největší síť autobazarů v ČR |
+| 2 | **Havex** (havex.cz) | |
+| 2 | **Auto ESA** (autoesa.cz) | |
+| 2 | **Škoda Plus** (skodaplus.cz) | certifikované ojeté Škody |
+| 3 | **Autorro**, **Spoticar**, BMW Premium Selection, Mercedes, Toyota Used… | značkové programy – přidávat postupně |
+
+Seznam je otevřený – nový zdroj = nový adaptér + záznam v tabulce `sources`.
+
+**Slušný scraping:** max. ~1 požadavek za 2–5 s na doménu, respektovat
+`robots.txt`, žádné obcházení captchy/přihlášení, jen osobní použití.
 
 ## 3. Technologie
 
-- **Python 3.12**, správa závislostí `uv` (nebo pip + `pyproject.toml`)
-- **httpx** (async HTTP) + **selectolax** (rychlé parsování HTML)
-- **Playwright** jen pro weby, kde to jinak nejde
-- **SQLite** přes **SQLModel/SQLAlchemy** (jeden soubor, žádný server)
-- **FastAPI + Jinja2 + HTMX** – jednoduché webové rozhraní bez složitého frontendu
-- **APScheduler** – pravidelné spouštění (např. každých 30 min)
-- **Typer** – příkazová řádka
-- Notifikace: **Telegram bot** a/nebo **e-mail (SMTP)**
-- Testy: **pytest** + uložené HTML/JSON ukázky (bez sítě)
-- Nasazení: **Docker / docker-compose** (běží na PC, NAS nebo levném VPS)
+| Vrstva | Volba |
+|---|---|
+| Databáze, auth, úložiště | **Supabase** (Postgres + Auth + Row Level Security) |
+| Web (UI + API) | **Next.js 15 (App Router, TypeScript)** na **Vercelu** |
+| UI komponenty | Tailwind CSS + shadcn/ui |
+| Scrapery | **TypeScript (Node 22)**: `undici`/`fetch` + `cheerio`, **Playwright** jen kde je nutný |
+| Spouštění scraperů | **GitHub Actions cron** (každých 30 min) |
+| Notifikace | **Telegram bot** + e-mail (Resend), volá se po každém běhu |
+| Validace / typy | `zod`, typy generované ze Supabase (`supabase gen types`) |
+| Testy | `vitest` + uložené HTML/JSON fixtury (bez sítě) |
+| Monorepo | `pnpm` workspaces |
+
+### Proč scrapery neběží na Vercelu
+- Vercel funkce mají časový limit a Playwright se do nich špatně vejde.
+- Vercel Cron je na Hobby plánu omezený (1× denně).
+- GitHub Actions: zdarma, běh až 6 h, Playwright funguje, cron co 30 min,
+  a běží s IP, která se mění (menší šance na blokaci).
+
+Vercel tedy hostí jen web; scrapery zapisují přímo do Supabase přes
+`service_role` klíč uložený v GitHub Secrets.
+
+*(Alternativa: Supabase Edge Functions + `pg_cron` – jen pro jednoduché JSON zdroje
+bez Playwrightu. Může se přidat později.)*
 
 ## 4. Architektura
 
 ```
-            ┌──────────────┐
-  Web UI ──►│  FastAPI app │◄── CLI (typer)
-            └──────┬───────┘
-                   │
-         ┌─────────▼─────────┐     ┌───────────────┐
-         │  Scheduler        │────►│ Search runner │
-         └───────────────────┘     └──────┬────────┘
-                                          │ pro každé hledání × každý bazar
-          ┌──────────────┬────────────────┼───────────────┐
-          ▼              ▼                ▼               ▼
-     SautoAdapter   BazosAdapter   TipcarsAdapter   AutoScoutAdapter …
-          └──────────────┴───────┬────────┴───────────────┘
-                                 ▼  (sjednocený Listing)
-                        Normalizace + deduplikace
-                                 ▼
-                         SQLite (listings, ceny)
-                                 ▼
-                     Notifikace (nové / zlevněné)
+  ┌──────────────── Vercel ────────────────┐
+  │ Next.js: přihlášení, správa hledání,   │
+  │ výsledky, detail + graf ceny, oblíbené │
+  └───────────────┬────────────────────────┘
+                  │ supabase-js (anon key + RLS)
+          ┌───────▼──────────────── Supabase ─┐
+          │ Postgres: searches, listings,      │
+          │ price_history, matches, sources,   │
+          │ scrape_runs   ·  Auth              │
+          └───────▲────────────────────────────┘
+                  │ service_role key
+  ┌───────────────┴─── GitHub Actions (cron 30 min) ───┐
+  │ runner: načte aktivní hledání → pro každý zdroj    │
+  │   adaptér.search() → normalizace → upsert          │
+  │   → dedup → price_history → nové shody → notifikace│
+  └────────────────────────────────────────────────────┘
 ```
+
+Zdroje se v Actions spouštějí paralelně (matrix podle zdroje), aby pád
+jednoho bazaru nezastavil ostatní.
 
 ### Rozhraní adaptéru
 
-```python
-class SourceAdapter(Protocol):
-    name: str                                   # "sauto", "bazos", ...
-    async def search(self, query: SearchQuery) -> AsyncIterator[Listing]: ...
-    async def fetch_detail(self, url: str) -> Listing | None: ...  # volitelné
+```ts
+export interface SourceAdapter {
+  id: string;                                   // "sauto", "carvago", ...
+  needsBrowser?: boolean;                       // Playwright
+  search(q: SearchQuery, ctx: Ctx): AsyncIterable<RawListing>;
+  normalize(raw: RawListing): Listing;          // sjednocení do společného tvaru
+}
 ```
 
-Adaptér převede `SearchQuery` na parametry konkrétního webu (URL / API), projde
-stránkování (limit např. 5 stránek) a vrací sjednocené `Listing` objekty.
+## 5. Datový model (Supabase / Postgres)
 
-## 5. Datový model
+- **searches** – `id, user_id, name, enabled, make, model, year_from, year_to,
+  price_from, price_to, mileage_max, fuel[], transmission, body[], power_min_kw,
+  keywords[], exclude_keywords[], sources[], notify, created_at`
+- **listings** – `id, source, source_id (unique se source), url, title, make, model,
+  variant, year, mileage_km, price_czk, price_orig, currency_orig, fuel,
+  transmission, power_kw, body, color, location, country, seller_type
+  (private/dealer), vin, image_urls[], first_seen, last_seen, is_active,
+  fingerprint, group_id`
+- **price_history** – `listing_id, price_czk, seen_at`
+- **matches** – `search_id, listing_id, matched_at, notified_at, status
+  (new/favorite/hidden)`
+- **sources** – `id, name, enabled, last_run_at, last_ok_at, last_count`
+- **scrape_runs** – `id, source, started_at, finished_at, found, new, errors`
+- **exchange_rates** – denní kurz ČNB (EUR→CZK)
 
-**SearchQuery** (moje hledání)
-- `id`, `name` („Octavia combi do 300k“), `enabled`
-- `make`, `model`, `year_from/to`, `price_from/to` (CZK), `mileage_max`
-- `fuel` (benzín/nafta/hybrid/elektro/LPG), `transmission`, `body`
-- `keywords` (volitelně, např. „DSG“, „4x4“), `exclude_keywords` („havarované“)
-- `sources` (seznam bazarů), `notify` (ano/ne)
+**Deduplikace:** stejný VIN → stejné auto; jinak `fingerprint`
+(značka+model+rok+nájezd zaokrouhlený na 1000 km+výkon) → společné `group_id`,
+v UI se zobrazí jako jedno auto s více nabídkami (a nejnižší cenou).
 
-**Listing** (inzerát)
-- `id`, `source`, `source_id`, `url`, `title`
-- `make`, `model`, `year`, `mileage_km`, `price_czk`, `currency_orig`, `price_orig`
-- `fuel`, `transmission`, `power_kw`, `body`, `location`, `seller_type` (soukromník/dealer)
-- `image_url`, `first_seen`, `last_seen`, `is_active`
-- `fingerprint` – pro deduplikaci napříč bazary (značka+model+rok+nájezd zaokr.+cena zaokr.)
-
-**PriceHistory** – `listing_id`, `price_czk`, `seen_at`
-
-**QueryMatch** – vazba `search_query_id` ↔ `listing_id`, `notified_at`
-
-Ceny v EUR se převádějí na CZK podle denního kurzu ČNB.
+**RLS:** uživatel vidí a upravuje jen svá `searches`/`matches`; `listings` jsou
+jen pro čtení; zápis dělá pouze runner (service_role).
 
 ## 6. Funkce
 
-**MVP (fáze 1–3)**
-1. Zadání hledání přes CLI nebo YAML (`searches.yaml`)
-2. Scraping Sauto, Bazoš, TipCars
-3. Uložení do SQLite, deduplikace, historie cen
-4. Výpis výsledků v terminálu a v jednoduchém webu (tabulka, filtry, řazení)
-5. Pravidelné spouštění + Telegram/e-mail notifikace na **nové** inzeráty
+**MVP**
+1. Přihlášení (Supabase Auth – magic link e-mailem)
+2. Správa hledání ve webu (formulář s filtry, zapnout/vypnout)
+3. Scraping: Sauto, Bazoš, TipCars, Carvago, Das WeltAuto, AAA Auto
+4. Přehled výsledků: tabulka/karty, filtry, řazení (cena, rok, nájezd, nové)
+5. Telegram / e-mail upozornění na nové shody
+6. Stránka „Stav zdrojů“ – kdy který bazar naposledy fungoval
 
 **Další fáze**
-6. AutoScout24, Mobile.de, Autobazar.eu
-7. Upozornění na **zlevnění** a na zmizelé (prodané) inzeráty
-8. Webové rozhraní pro správu hledání (přidat/upravit/vypnout)
-9. Graf historie ceny, „férová cena“ – porovnání s mediánem podobných aut
-10. Označit inzerát jako oblíbený / skrytý
+7. Další zdroje (Havex, Auto ESA, Škoda Plus, AutoScout24, Mobile.de, …)
+8. Upozornění na zlevnění a na zmizelé (prodané) inzeráty
+9. Graf historie ceny, „férová cena“ (medián podobných aut), štítek „pod cenou“
+10. Oblíbené, skryté, poznámky k autu, porovnání vybraných aut
 
 ## 7. Struktura projektu
 
 ```
 scrapping_auta/
-├── pyproject.toml
-├── README.md
 ├── DESIGN.md
-├── searches.example.yaml
-├── .env.example            # TELEGRAM_TOKEN, SMTP_*, DB_PATH ...
-├── docker-compose.yml
-├── src/carhunter/
-│   ├── config.py
-│   ├── models.py           # SQLModel tabulky + Pydantic schémata
-│   ├── db.py
-│   ├── http.py             # sdílený klient: rate-limit, retry, User-Agent
-│   ├── normalize.py        # sjednocení značek, paliv, převod měn
-│   ├── dedup.py
-│   ├── runner.py           # spustí hledání přes adaptéry
-│   ├── scheduler.py
-│   ├── notify/ (telegram.py, email.py)
-│   ├── sources/
-│   │   ├── base.py
-│   │   ├── sauto.py
-│   │   ├── bazos.py
-│   │   ├── tipcars.py
-│   │   └── autoscout24.py
-│   ├── web/ (app.py, templates/)
-│   └── cli.py
-└── tests/
-    ├── fixtures/           # uložené HTML/JSON z bazarů
-    └── test_*.py
+├── README.md
+├── package.json / pnpm-workspace.yaml
+├── supabase/
+│   ├── migrations/            # SQL schéma + RLS
+│   └── seed.sql
+├── apps/web/                  # Next.js → Vercel
+│   ├── app/ (login, searches, results, listing/[id], sources)
+│   └── lib/supabase/
+├── packages/
+│   ├── core/                  # typy, zod schémata, normalizace, dedup, matching
+│   └── scrapers/
+│       ├── src/http.ts        # rate-limit, retry, user-agent
+│       ├── src/runner.ts
+│       ├── src/notify/ (telegram.ts, email.ts)
+│       ├── src/sources/ (sauto.ts, bazos.ts, tipcars.ts, carvago.ts,
+│       │                 dasweltauto.ts, aaaauto.ts, havex.ts, …)
+│       └── test/fixtures/
+└── .github/workflows/
+    ├── scrape.yml             # cron */30, matrix podle zdroje
+    └── ci.yml                 # lint, typecheck, testy
 ```
 
-## 8. Použití (cílový stav)
+## 8. Konfigurace (secrets)
 
-```bash
-carhunter search add "Octavia RS" --make skoda --model octavia \
-    --year-from 2018 --price-to 450000 --fuel benzin
-carhunter run            # jednorázově projde všechny bazary
-carhunter list --query "Octavia RS" --sort price
-carhunter serve          # web na http://localhost:8000 + scheduler
-```
+- Vercel: `NEXT_PUBLIC_SUPABASE_URL`, `NEXT_PUBLIC_SUPABASE_ANON_KEY`
+- GitHub Actions: `SUPABASE_URL`, `SUPABASE_SERVICE_ROLE_KEY`,
+  `TELEGRAM_BOT_TOKEN`, `TELEGRAM_CHAT_ID`, `RESEND_API_KEY`
 
 ## 9. Plán implementace (pro Sonnet)
 
-1. Kostra projektu, `pyproject.toml`, modely, DB, CLI (`search add/list`, `run`)
-2. `http.py` (rate-limit, retry) + adaptér **Sauto** + testy na fixturách
-3. Adaptéry **Bazoš** a **TipCars** + testy
-4. Normalizace, deduplikace, historie cen
-5. Notifikace (Telegram, e-mail) jen pro nové shody
-6. FastAPI web: tabulka výsledků, filtry, detail s historií ceny
-7. Scheduler + Docker
-8. Další bazary (AutoScout24, …)
+1. Monorepo kostra (pnpm, TS, eslint, vitest, CI workflow)
+2. Supabase projekt + migrace (tabulky, indexy, RLS) + generované typy
+3. `packages/core`: typy, normalizace (značky, paliva, měny), matching, dedup
+4. `packages/scrapers`: http klient + runner + adaptéry **Sauto, Bazoš, TipCars** s testy
+5. Adaptéry **Carvago, Das WeltAuto, AAA Auto** s testy
+6. GitHub Actions `scrape.yml` + zápis `scrape_runs`
+7. Next.js web: login, správa hledání, výsledky, detail, stav zdrojů → deploy na Vercel
+8. Notifikace Telegram / e-mail
+9. Další zdroje a funkce z fáze 2
 
-Každý krok = samostatný commit, testy musí projít (`pytest`), lint `ruff`.
+Každý krok = samostatný commit; musí projít `pnpm lint && pnpm typecheck && pnpm test`.
 
 ## 10. Rizika
 
-- **Změna HTML/API bazaru** rozbije adaptér → testy na fixturách + log chyb
-  a upozornění „adaptér X vrátil 0 výsledků“.
-- **Blokace (403/captcha)** → nízká frekvence, případně Playwright; nic neobcházet násilím.
-- **Podmínky použití** webů → jen osobní, nekomerční použití, žádné přeposílání dat.
+- **Změna webu bazaru** rozbije adaptér → testy na fixturách, `scrape_runs`
+  a upozornění „zdroj X vrátil 0 výsledků 3× po sobě“.
+- **Blokace (403/captcha)** → nízká frekvence, Playwright, nic neobcházet násilím.
+- **Limity free plánů**: Supabase free (500 MB DB, pauza po týdnu nečinnosti –
+  pravidelný cron ji drží aktivní), GitHub Actions free minuty (u privátního
+  repa 2000 min/měsíc → při 30min intervalu hlídat délku běhu, případně 1× za hodinu).
+- **Podmínky použití** webů → jen osobní, nekomerční použití.
