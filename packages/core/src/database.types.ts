@@ -155,6 +155,16 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["exchange_rates"]["Row"]>;
         Relationships: [];
       };
+      user_state: {
+        Row: {
+          user_id: string;
+          results_seen_at: string | null;
+          results_seen_prev: string | null;
+        };
+        Insert: Partial<Database["public"]["Tables"]["user_state"]["Row"]> & { user_id: string };
+        Update: Partial<Database["public"]["Tables"]["user_state"]["Row"]>;
+        Relationships: [];
+      };
     };
     Views: {
       make_models: {
@@ -166,7 +176,74 @@ export interface Database {
         Relationships: [];
       };
     };
-    Functions: Record<string, never>;
+    Functions: {
+      search_listings: {
+        Args: {
+          p_search_id?: string | null;
+          p_make?: string | null;
+          p_model?: string | null;
+          p_price_from?: number | null;
+          p_price_to?: number | null;
+          p_year_from?: number | null;
+          p_year_to?: number | null;
+          p_mileage_max?: number | null;
+          p_power_min_kw?: number | null;
+          p_fuel?: string[] | null;
+          p_body?: string[] | null;
+          p_transmission?: string | null;
+          p_sources?: string[] | null;
+          p_drive?: string[] | null;
+          p_text_terms?: string[] | null;
+          p_only_new?: boolean | null;
+          p_seen_prev?: string | null;
+          p_sort?: string | null;
+          p_limit?: number | null;
+          p_offset?: number | null;
+        };
+        Returns: {
+          id: string;
+          source: string;
+          source_id: string;
+          url: string;
+          title: string;
+          make: string | null;
+          model: string | null;
+          variant: string | null;
+          year: number | null;
+          mileage_km: number | null;
+          price_czk: number | null;
+          price_orig: number | null;
+          currency_orig: string;
+          fuel: string | null;
+          transmission: string | null;
+          power_kw: number | null;
+          body: string | null;
+          color: string | null;
+          location: string | null;
+          country: string;
+          seller_type: string;
+          vin: string | null;
+          image_urls: string[];
+          drive: string | null;
+          equipment: string[];
+          first_seen: string;
+          last_seen: string;
+          is_active: boolean;
+          fingerprint: string;
+          group_id: string | null;
+          created_at: string;
+          match_id: string | null;
+          match_status: string | null;
+          group_offer_count: number;
+          is_new: boolean;
+          total_count: number;
+        }[];
+      };
+      new_matches_count: {
+        Args: Record<string, never>;
+        Returns: number;
+      };
+    };
     Enums: Record<string, never>;
   };
 }

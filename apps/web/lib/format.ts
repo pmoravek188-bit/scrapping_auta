@@ -34,6 +34,12 @@ export const TRANSMISSION_LABELS: Record<string, string> = {
   automatic: "Automatická",
 };
 
+export const DRIVE_LABELS: Record<string, string> = {
+  awd: "4x4 / AWD",
+  fwd: "Přední",
+  rwd: "Zadní",
+};
+
 export const BODY_LABELS: Record<string, string> = {
   hatchback: "Hatchback",
   sedan: "Sedan",

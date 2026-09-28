@@ -1,9 +1,10 @@
 import Link from "next/link";
-import { Calendar, Gauge, MapPin, ImageOff, TrendingDown, Layers } from "lucide-react";
+import { Calendar, Gauge, MapPin, ImageOff, TrendingDown, Layers, Sparkles } from "lucide-react";
 import clsx from "clsx";
 import { formatCzk, formatKm, FUEL_LABELS, TRANSMISSION_LABELS } from "@/lib/format";
 import { FUEL_ICONS } from "@/lib/icons";
 import { FavoriteButton } from "@/components/favorite-button";
+import { HideButton } from "@/components/hide-button";
 
 export interface CarCardListing {
   id: string;
@@ -18,8 +19,10 @@ export interface CarCardListing {
   power_kw?: number | null;
   location: string | null;
   image_urls: string[];
+  drive?: string | null;
   group_offer_count?: number;
   price_dropped?: boolean;
+  is_new?: boolean;
 }
 
 export function CarCard({
@@ -27,11 +30,20 @@ export function CarCard({
   matchId,
   favorite,
   className,
+  onHide,
+  hideBusy,
 }: {
   listing: CarCardListing;
   matchId?: string;
   favorite?: boolean;
   className?: string;
+  /** Task E: "Skrýt nabídku" is now a small round icon button in the image's
+   * top-right corner (next to the favourite button) instead of an
+   * absolutely-positioned overlay at the bottom, which used to sit on top of
+   * the price. Only rendered when the caller passes a handler (hiding needs
+   * a `matches` row, which only exists in the "Moje hledání" scope). */
+  onHide?: () => void;
+  hideBusy?: boolean;
 }) {
   const img = listing.image_urls?.[0];
   const FuelIcon = listing.fuel ? FUEL_ICONS[listing.fuel as keyof typeof FUEL_ICONS] : null;
@@ -69,7 +81,18 @@ export function CarCard({
               <ImageOff className="h-10 w-10" aria-hidden />
             </div>
           )}
+          {/* Badges: top-left, stacked/wrapped — never overlaps the icon
+              buttons (top-right) or the source badge (bottom-left). */}
           <div className="absolute left-2 top-2 flex flex-wrap gap-1">
+            {listing.is_new && (
+              <span className="badge bg-emerald-500 text-white shadow-sm">
+                <Sparkles className="h-3 w-3" aria-hidden />
+                NOVÉ
+              </span>
+            )}
+            {listing.drive === "awd" && (
+              <span className="badge bg-gray-900/85 text-white shadow-sm">4x4</span>
+            )}
             {listing.group_offer_count && listing.group_offer_count > 1 && (
               <span className="badge bg-white/90 text-gray-700 shadow-sm">
                 <Layers className="h-3 w-3" aria-hidden />
@@ -77,18 +100,31 @@ export function CarCard({
               </span>
             )}
             {listing.price_dropped && (
-              <span className="badge bg-emerald-600 text-white shadow-sm">
+              <span className="badge bg-amber-500 text-white shadow-sm">
                 <TrendingDown className="h-3 w-3" aria-hidden />
                 zlevněno
               </span>
             )}
           </div>
-          <span className="badge absolute right-2 top-2 bg-black/60 text-white backdrop-blur-sm">
+
+          {/* Source badge: bottom-left of the image (task E moved it away
+              from top-right so it can't collide with the icon buttons). */}
+          <span className="badge absolute bottom-2 left-2 bg-black/60 text-white backdrop-blur-sm">
             {listing.source}
           </span>
-          {matchId && (
-            <div className="absolute bottom-2 right-2">
-              <FavoriteButton matchId={matchId} initialFavorite={!!favorite} />
+
+          {/* Icon buttons: top-right of the image, horizontal, small round
+              buttons — kept well clear of the price/title text below.
+              NOTE: no wrapping onClick here — this file (car-card.tsx) is
+              rendered both as a genuine Server Component (app/page.tsx) and
+              as a client-rendered component (results/result-row.tsx), and a
+              Server Component's own JSX can never attach a raw DOM event
+              handler. FavoriteButton/HideButton are real Client Components
+              that each handle their own preventDefault+stopPropagation. */}
+          {(matchId || onHide) && (
+            <div className="absolute right-2 top-2 flex items-center gap-1.5">
+              {matchId && <FavoriteButton matchId={matchId} initialFavorite={!!favorite} />}
+              {onHide && <HideButton onHide={onHide} busy={hideBusy} />}
             </div>
           )}
         </div>

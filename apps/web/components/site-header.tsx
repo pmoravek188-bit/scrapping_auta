@@ -2,7 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-import { useState } from "react";
+import { useEffect, useState } from "react";
 import clsx from "clsx";
 import { Car, LogOut, Menu, X } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
@@ -13,11 +13,37 @@ const NAV = [
   { href: "/sources", label: "Zdroje" },
 ];
 
+/** Task F: count pill on the "Výsledky" nav item — matches created since the
+ * user's results_seen_prev watermark, across all of their searches. Fetched
+ * client-side (public.new_matches_count RPC) since SiteHeader itself is a
+ * client component (needs usePathname for the active-link styling). */
+function useNewMatchesCount(): number {
+  const pathname = usePathname();
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createSupabaseBrowserClient();
+    if (!supabase) return;
+    supabase.rpc("new_matches_count").then(({ data }) => {
+      if (!cancelled && typeof data === "number") setCount(data);
+    });
+    return () => {
+      cancelled = true;
+    };
+    // Re-check whenever the route changes (e.g. after visiting /results,
+    // which rolls the watermark forward and should shrink/clear the pill).
+  }, [pathname]);
+
+  return count;
+}
+
 export function SiteHeader() {
   const pathname = usePathname();
   const router = useRouter();
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
+  const newMatchesCount = useNewMatchesCount();
 
   async function logout() {
     const supabase = createSupabaseBrowserClient();
@@ -42,13 +68,18 @@ export function SiteHeader() {
               key={item.href}
               href={item.href}
               className={clsx(
-                "rounded-lg px-3 py-2 transition",
+                "flex items-center gap-1.5 rounded-lg px-3 py-2 transition",
                 pathname.startsWith(item.href)
                   ? "bg-brand-50 text-brand-700"
                   : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
               )}
             >
               {item.label}
+              {item.href === "/results" && newMatchesCount > 0 && (
+                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-500 px-1 text-[11px] font-semibold text-white">
+                  {newMatchesCount}
+                </span>
+              )}
             </Link>
           ))}
         </div>

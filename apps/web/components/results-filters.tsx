@@ -4,16 +4,20 @@ import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import {
   BODY_TYPES,
+  DRIVE_TYPES,
+  FEATURE_GROUPS,
   FUEL_TYPES,
   TRANSMISSION_TYPES,
+  VERSION_GROUPS,
   type BodyType,
+  type DriveType,
   type FuelType,
   type TransmissionType,
   type MakeOption,
   type ModelOption,
   prettifyModelSlug,
 } from "@scrapping-auta/core";
-import { BODY_LABELS, FUEL_LABELS, TRANSMISSION_LABELS } from "@/lib/format";
+import { BODY_LABELS, DRIVE_LABELS, FUEL_LABELS, TRANSMISSION_LABELS } from "@/lib/format";
 import { FUEL_ICONS, BODY_ICONS, TRANSMISSION_ICONS } from "@/lib/icons";
 import {
   PRICE_STEPS,
@@ -39,6 +43,9 @@ export interface ResultsFilterValues {
   body: BodyType[];
   transmission: TransmissionType | "";
   sources: string[];
+  drive: DriveType[];
+  features: string[];
+  only_new: boolean;
 }
 
 /** Shared filter form used both in the desktop sidebar and the mobile drawer
@@ -72,7 +79,7 @@ export function ResultsFilters({
     return list;
   }, [values.make, values.model, makeModels]);
 
-  function toggle<T extends string>(field: "fuel" | "body" | "sources", value: T) {
+  function toggle<T extends string>(field: "fuel" | "body" | "sources" | "drive" | "features", value: T) {
     setValues((prev) => {
       const list = prev[field] as string[];
       const next = list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
@@ -97,6 +104,9 @@ export function ResultsFilters({
     for (const f of values.fuel) params.append("fuel", f);
     for (const b of values.body) params.append("body", b);
     for (const s of values.sources) params.append("sources", s);
+    for (const d of values.drive) params.append("drive", d);
+    for (const ft of values.features) params.append("features", ft);
+    if (values.only_new) params.set("only_new", "1");
     router.push(`/results?${params.toString()}`);
     router.refresh();
     onApplied?.();
@@ -239,6 +249,44 @@ export function ResultsFilters({
               icon={TRANSMISSION_ICONS[t]}
             />
           ))}
+        </div>
+      </div>
+
+      <div>
+        <label className="label">Pohon</label>
+        <div className="flex flex-wrap gap-2">
+          {DRIVE_TYPES.map((d) => (
+            <Chip key={d} active={values.drive.includes(d)} onClick={() => toggle("drive", d)} label={DRIVE_LABELS[d] ?? d} />
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label className="label">Verze</label>
+        <div className="flex flex-wrap gap-2">
+          {VERSION_GROUPS.map((g) => (
+            <Chip key={g.id} active={values.features.includes(g.id)} onClick={() => toggle("features", g.id)} label={g.label} />
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label className="label">Výbava</label>
+        <div className="flex flex-wrap gap-2">
+          {FEATURE_GROUPS.map((g) => (
+            <Chip key={g.id} active={values.features.includes(g.id)} onClick={() => toggle("features", g.id)} label={g.label} />
+          ))}
+        </div>
+      </div>
+
+      <div>
+        <label className="label">Ostatní</label>
+        <div className="flex flex-wrap gap-2">
+          <Chip
+            active={values.only_new}
+            onClick={() => setValues((v) => ({ ...v, only_new: !v.only_new }))}
+            label="Jen nové"
+          />
         </div>
       </div>
 

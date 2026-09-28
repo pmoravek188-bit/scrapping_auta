@@ -1,26 +1,8 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { githubConfig, getLatestScrapeRun, dispatchScrape } from "@/lib/scrape-trigger.server";
 
 export const dynamic = "force-dynamic";
-
-const DEFAULT_REPO = "pmoravek188-bit/scrapping_auta";
-const DEFAULT_REF = "claude/car-search-app-y4b753";
-
-function githubConfig() {
-  const token = process.env.GITHUB_DISPATCH_TOKEN;
-  const repo = process.env.GITHUB_REPO || DEFAULT_REPO;
-  const ref = process.env.GITHUB_REF || DEFAULT_REF;
-  if (!token) return null;
-  return { token, repo, ref };
-}
-
-function githubHeaders(token: string) {
-  return {
-    Authorization: `Bearer ${token}`,
-    Accept: "application/vnd.github+json",
-    "X-GitHub-Api-Version": "2022-11-28",
-  };
-}
 
 /**
  * NOTE: the middleware matcher excludes paths starting with "api" (see
@@ -47,38 +29,22 @@ export async function GET() {
     return NextResponse.json({ configured: false });
   }
 
-  const res = await fetch(
-    `https://api.github.com/repos/${config.repo}/actions/workflows/scrape.yml/runs?per_page=1`,
-    { headers: githubHeaders(config.token), cache: "no-store" }
-  );
-
-  if (!res.ok) {
-    return NextResponse.json(
-      { configured: true, error: `GitHub API vrátilo ${res.status}` },
-      { status: 502 }
-    );
+  const run = await getLatestScrapeRun(config);
+  if (run === null) {
+    // getLatestScrapeRun returns null both for "no runs yet" and for a
+    // non-ok GitHub API response; either way there's nothing actionable to
+    // report back beyond "configured, nothing to show".
+    return NextResponse.json({ configured: true, run: null });
   }
-
-  const data = (await res.json()) as {
-    workflow_runs?: Array<{
-      status: string;
-      conclusion: string | null;
-      created_at: string;
-      html_url: string;
-    }>;
-  };
-  const run = data.workflow_runs?.[0];
 
   return NextResponse.json({
     configured: true,
-    run: run
-      ? {
-          status: run.status,
-          conclusion: run.conclusion,
-          created_at: run.created_at,
-          html_url: run.html_url,
-        }
-      : null,
+    run: {
+      status: run.status,
+      conclusion: run.conclusion,
+      created_at: run.created_at,
+      html_url: run.html_url,
+    },
   });
 }
 
@@ -103,24 +69,9 @@ export async function POST(request: NextRequest) {
     // no body sent — run all sources
   }
 
-  const res = await fetch(
-    `https://api.github.com/repos/${config.repo}/actions/workflows/scrape.yml/dispatches`,
-    {
-      method: "POST",
-      headers: { ...githubHeaders(config.token), "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ref: config.ref,
-        inputs: source ? { source } : {},
-      }),
-    }
-  );
-
-  if (!res.ok) {
-    const text = await res.text().catch(() => "");
-    return NextResponse.json(
-      { error: "dispatch_failed", message: `GitHub API vrátilo ${res.status}: ${text}` },
-      { status: 502 }
-    );
+  const result = await dispatchScrape(config, source);
+  if (!result.ok) {
+    return NextResponse.json({ error: "dispatch_failed", message: result.message }, { status: 502 });
   }
 
   return NextResponse.json({ ok: true });

@@ -5,19 +5,21 @@ import { useMemo, useState } from "react";
 import { ChevronDown } from "lucide-react";
 import {
   BODY_TYPES,
+  DRIVE_TYPES,
+  FEATURE_GROUPS,
   FUEL_TYPES,
   TRANSMISSION_TYPES,
+  VERSION_GROUPS,
   type BodyType,
+  type DriveType,
   type FuelType,
   type TransmissionType,
   type MakeOption,
   type ModelOption,
   prettifyModelSlug,
-  normalizeMake,
-  normalizeModel,
 } from "@scrapping-auta/core";
-import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { BODY_LABELS, FUEL_LABELS, TRANSMISSION_LABELS } from "@/lib/format";
+import { saveSearchAndRematch } from "@/app/actions/rematch";
+import { BODY_LABELS, FUEL_LABELS, TRANSMISSION_LABELS, DRIVE_LABELS } from "@/lib/format";
 import { FUEL_ICONS, BODY_ICONS, TRANSMISSION_ICONS } from "@/lib/icons";
 import {
   PRICE_STEPS,
@@ -30,6 +32,7 @@ import {
 } from "@/lib/filter-options";
 import { Chip } from "@/components/chip";
 import { TagInput } from "@/components/tag-input";
+import { Toast } from "@/components/toast";
 
 export interface SearchFormValues {
   id?: string;
@@ -48,6 +51,8 @@ export interface SearchFormValues {
   keywords: string;
   exclude_keywords: string;
   sources: string[];
+  drive: DriveType[];
+  features: string[];
   notify: boolean;
   enabled: boolean;
 }
@@ -68,6 +73,8 @@ export const EMPTY_SEARCH_FORM: SearchFormValues = {
   keywords: "",
   exclude_keywords: "",
   sources: [],
+  drive: [],
+  features: [],
   notify: true,
   enabled: true,
 };
@@ -100,6 +107,7 @@ export function SearchForm({
   const [values, setValues] = useState<SearchFormValues>(initial);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState<string | null>(null);
+  const [toast, setToast] = useState<string | null>(null);
   const [keywordTags, setKeywordTags] = useState<string[]>(toList(initial.keywords));
   const [excludeTags, setExcludeTags] = useState<string[]>(toList(initial.exclude_keywords));
   const [moreOpen, setMoreOpen] = useState(
@@ -125,7 +133,10 @@ export function SearchForm({
     return list;
   }, [values.make, values.model, makeModels]);
 
-  function toggleArrayValue<T extends string>(field: "fuel" | "body" | "sources", value: T) {
+  function toggleArrayValue<T extends string>(
+    field: "fuel" | "body" | "sources" | "drive" | "features",
+    value: T
+  ) {
     setValues((prev) => {
       const list = prev[field] as string[];
       const next = list.includes(value) ? list.filter((v) => v !== value) : [...list, value];
@@ -136,25 +147,15 @@ export function SearchForm({
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     setError(null);
-    const supabase = createSupabaseBrowserClient();
-    if (!supabase) return;
     setSaving(true);
 
-    const {
-      data: { user },
-    } = await supabase.auth.getUser();
-    if (!user) {
-      setError("Nejste přihlášeni.");
-      setSaving(false);
-      return;
-    }
-
-    const payload = {
-      user_id: user.id,
+    const result = await saveSearchAndRematch({
+      id: values.id,
       name: values.name || "Bez názvu",
       enabled: values.enabled,
-      make: values.make ? normalizeMake(values.make) : null,
-      model: values.model ? normalizeModel(values.model) : null,
+      notify: values.notify,
+      make: values.make || null,
+      model: values.model || null,
       year_from: toIntOrNull(values.year_from),
       year_to: toIntOrNull(values.year_to),
       price_from: toIntOrNull(values.price_from),
@@ -167,24 +168,27 @@ export function SearchForm({
       keywords: keywordTags,
       exclude_keywords: excludeTags,
       sources: values.sources,
-      notify: values.notify,
-    };
-
-    const { error } = values.id
-      ? await supabase.from("searches").update(payload).eq("id", values.id)
-      : await supabase.from("searches").insert(payload);
+      drive: values.drive,
+      features: values.features,
+    });
 
     setSaving(false);
-    if (error) {
-      setError(error.message);
+    if (!result.ok) {
+      setError(result.error ?? "Uložení se nezdařilo.");
       return;
     }
-    router.push("/searches");
+
+    setToast(
+      `Hledání uloženo · nalezeno ${result.matchCount ?? 0} aut` +
+        (result.scrapeTriggered ? " · spuštěno stahování nových" : "")
+    );
     router.refresh();
+    setTimeout(() => router.push("/searches"), 1200);
   }
 
   return (
     <form onSubmit={handleSubmit} className="space-y-5">
+      {toast && <Toast message={toast} onDone={() => setToast(null)} />}
       {error && <p className="rounded-lg bg-red-50 p-3 text-sm text-red-700">{error}</p>}
 
       <div className="card space-y-4">
@@ -337,6 +341,50 @@ export function SearchForm({
               />
             ))}
           </div>
+        </div>
+      </div>
+
+      <div className="card space-y-4">
+        <h2 className="section-title">Pohon a verze</h2>
+        <div>
+          <label className="label">Pohon</label>
+          <div className="flex flex-wrap gap-2">
+            {DRIVE_TYPES.map((d) => (
+              <Chip
+                key={d}
+                active={values.drive.includes(d)}
+                onClick={() => toggleArrayValue("drive", d)}
+                label={DRIVE_LABELS[d] ?? d}
+              />
+            ))}
+          </div>
+        </div>
+        <div>
+          <label className="label">Verze</label>
+          <div className="flex flex-wrap gap-2">
+            {VERSION_GROUPS.map((g) => (
+              <Chip
+                key={g.id}
+                active={values.features.includes(g.id)}
+                onClick={() => toggleArrayValue("features", g.id)}
+                label={g.label}
+              />
+            ))}
+          </div>
+        </div>
+      </div>
+
+      <div className="card space-y-3">
+        <h2 className="section-title">Výbava</h2>
+        <div className="flex flex-wrap gap-2">
+          {FEATURE_GROUPS.map((g) => (
+            <Chip
+              key={g.id}
+              active={values.features.includes(g.id)}
+              onClick={() => toggleArrayValue("features", g.id)}
+              label={g.label}
+            />
+          ))}
         </div>
       </div>
 

@@ -220,6 +220,104 @@ Zdroje se zapínají/vypínají v tabulce `sources` (sloupec `enabled`).
   odpovídá uloženému hledání — používá ho jak runner (nezávisle na tom, co
   zdroj uměl filtrovat na serveru), tak testy.
 
+## Výsledky (`/results`): scope, okamžitý rematch, „NOVÉ“
+
+### Scope výsledků
+
+`/results` má přepínač scope nahoře:
+
+- **„Všechna auta“** (výchozí) — prochází přímo `public.listings` (všechny
+  aktivní inzeráty), bez ohledu na to, jestli mají uložené hledání.
+- **„Moje hledání: `<název>`“** — jedna záložka na každé uložené hledání,
+  ukazuje jen jeho `matches` (se stavem různým od `hidden`).
+
+Obě scope běží přes jednu security-invoker RPC funkci
+`public.search_listings` (viz migrace
+`supabase/migrations/20260928200000_results_rework.sql`), která v jednom
+dotazu:
+
+- aplikuje všechny DB-bezpečné filtry (značka/model přes normalizovaný slug
+  včetně prefix-matche na model, `price_czk`/`year`/`mileage_km`/`power_kw`
+  rozsahy, `fuel`/`body`/`transmission`/`sources`/`drive` seznamy —
+  fuel/body/transmission jsou null-tolerantní stejně jako
+  `packages/core`'s `matchesSearch`, `drive` je striktní),
+  a pro chip filtry "Výbava"/"Verze" jen OR-ILIKE prefiltr (viz níže),
+- deduplikuje podle `group_id` (jedna karta na skupinu, nejlevnější nabídka,
+  počet ostatních nabídek jako `group_offer_count` → badge „více nabídek
+  (N)“),
+- označí `is_new` (viz sekce „NOVÉ“ níže),
+- seřadí a stránkuje (30 na stránku, „Předchozí“/„Načíst další“ odkazy na
+  `?page=N`) s přesným `count(*) over()`.
+
+**Omezení textového filtrování**: whole-token porovnání (`packages/core`'s
+`text-match.ts`/`hasAllFeatures`) nejde levně vyjádřit v SQL. RPC parametr
+`p_text_terms` je jen OR-spojený `ILIKE` prefiltr přes všechny synonyma
+zaškrtnutých „Výbava“/„Verze“ chipů; `apps/web/app/results/page.tsx` pak nad
+vrácenou stránkou ještě spustí přesnou whole-token kontrolu
+(`hasAllFeatures`, AND napříč zaškrtnutými chips). Při 2+ zaškrtnutých
+chipech to může legitimně vrátit méně než 30 karet na stránku a
+`total_count`/počet stránek je pak horní odhad, ne přesné číslo (v UI
+označeno „(přibližně)“) — přesné řešení by vyžadovalo whole-token matching
+přímo v Postgresu (např. přes `tsvector`/regex), což je mimo rozsah této
+migrace.
+
+### Okamžitý rematch (uložení/úprava hledání)
+
+Uložení hledání (`/searches/new`, `/searches/[id]/edit`, i „Uložit jako
+hledání“ na `/results`) jde přes server akci
+`apps/web/app/actions/rematch.ts#saveSearchAndRematch`, běžící s Supabase
+session přihlášeného uživatele (ne `service_role`):
+
+1. Uloží/aktualizuje řádek v `searches`.
+2. `rematchSearch`: DB-side prefiltr aktivních inzerátů podle
+   značky/modelu/ceny/roku, pak přesný `matchesSearch` (`packages/core`) v
+   kódu — stejná funkce jako v `packages/scrapers/src/runner.ts`. Nově
+   odpovídající inzeráty se vloží do `matches` **s `notified_at = now()`**,
+   takže e-mailový digest (`packages/scrapers/src/runner.ts`, posílá jen
+   `matches` kde `notified_at is null`) je znovu nepošle — uživatel je právě
+   viděl okamžitě na webu. Řádky `matches`, které už neodpovídají upravenému
+   hledání, se smažou.
+3. `maybeAutoTriggerScrape` (`apps/web/lib/scrape-trigger.server.ts`, sdíleno
+   s `/api/scrape`): pokud je nastaven `GITHUB_DISPATCH_TOKEN` a žádný běh
+   `scrape.yml` není `queued`/`in_progress`, spustí nový běh, aby se do
+   hledání brzy dostaly i úplně nové inzeráty ze zdrojů.
+
+Toast po uložení: „Hledání uloženo · nalezeno X aut · spuštěno stahování
+nových“ (poslední část jen když se scraping opravdu spustil).
+
+**RLS**: `public.matches` mělo z `20260928120000_init.sql` jen
+select/update politiky pro vlastníka (řádky dřív zapisoval jen
+`service_role` runner). Protože rematch teď zapisuje jako přihlášený
+uživatel, `20260928200000_results_rework.sql` přidává
+`matches_insert_own`/`matches_delete_own_rematch`, obě podmíněné `exists
+(select 1 from public.searches s where s.id = search_id and s.user_id =
+(select auth.uid()))` — uživatel může vkládat/mazat jen matches svých
+vlastních hledání.
+
+### „NOVÉ“ a „Zlevněno“
+
+`public.user_state` (jeden řádek na uživatele, vlastní-only RLS) drží dva
+časy:
+
+- `results_seen_prev` — vodítko, proti kterému se počítá „NOVÉ“
+  (`first_seen > results_seen_prev` ve scope „Všechna auta“, `matches.matched_at
+  > results_seen_prev` ve scope hledání).
+- `results_seen_at` — kdy začala aktuální návštěva.
+
+Při každé návštěvě `/results` (`apps/web/app/actions/user-state.ts#touchResultsSeen`):
+pokud je `results_seen_at` starší než 30 minut, `results_seen_prev` se
+posune na starou hodnotu `results_seen_at` a `results_seen_at` na teď — jinak
+se nic neposouvá, takže badge „NOVÉ“ vydrží celé jedno prohlížení (ne
+zmizí hned po refresh). Tlačítko „Označit vše jako viděné“ obě hodnoty
+okamžitě sjednotí na teď.
+
+Zelený badge „NOVÉ“ je na kartě první (vlevo), chip „Jen nové“ ve filtrech
+filtruje jen na `is_new`. Badge „Zlevněno“ (žlutá) se počítá z posledních
+dvou záznamů `price_history` pro danou kartu (nejlevnější/aktuální nabídku
+skupiny). Nav položka „Výsledky“ má počítadlo (`public.new_matches_count`
+RPC) — počet `matches` napříč všemi hledáními uživatele novějších než jeho
+`results_seen_prev`.
+
 ## Runner (`packages/scrapers/src/runner.ts`)
 
 Pro každý zapnutý zdroj: pro každé zapnuté hledání, které daný zdroj
@@ -245,9 +343,18 @@ označí je jako odeslané.
   převádí na CZK; zobrazená cena je vždy včetně DPH (brutto) — u inzerátů,
   kde je DPH odpočitatelná pro firmy (`isVatLabelLegallyRequired`), se cena
   nijak nepřepočítává, jen se to označí „· odpočet DPH“ v titulku.
-- Filtry ve `/results` jsou zatím jen řazení + stav (aktivní/oblíbené/vše) +
-  výběr hledání; rozšířené filtrování přímo ve výsledcích (cena/rok/km) lze
-  doplnit později stejným způsobem jako formulář hledání.
-- „Férová cena“ / štítek „pod cenou“ a upozornění na zlevnění/zmizelé
-  inzeráty jsou v `DESIGN.md` označené jako další fáze a nejsou
-  implementované.
+- „Férová cena“ / štítek „pod cenou“ a upozornění na zmizelé inzeráty jsou v
+  `DESIGN.md` označené jako další fáze a nejsou implementované (badge
+  „Zlevněno“ pro pokles ceny už ano, viz sekce výsledků výše).
+- Textové filtrování (chipy „Výbava“/„Verze“) ve scope `/results` je jen
+  OR-ILIKE prefiltr v SQL + přesný whole-token check v kódu nad vrácenou
+  stránkou — u 2+ zaškrtnutých chipů proto `total_count`/počet stránek může
+  být jen horní odhad (viz „Omezení textového filtrování“ výše).
+- Skrýt/oblíbit nabídku funguje jen ve scope „Moje hledání“ (potřebuje řádek
+  v `matches`, který v scope „Všechna auta“ neexistuje, dokud se
+  inzerát nestane součástí nějakého uloženého hledání) — v scope „Všechna
+  auta“ se tato tlačítka u karty nezobrazují.
+- `new_matches_count` (počítadlo u „Výsledky“ v navigaci) se dotazuje přes
+  klientský Supabase klient při každé změně route; u velmi aktivního účtu
+  s desítkami hledání by šlo do budoucna nahradit realtime subscription
+  místo pollování při navigaci.

@@ -41,6 +41,8 @@ export default async function EditSearchPage({ params }: { params: Promise<{ id:
     keywords: (search.keywords ?? []).join(", "),
     exclude_keywords: (search.exclude_keywords ?? []).join(", "),
     sources: search.sources ?? [],
+    drive: (search.drive ?? []) as SearchFormValues["drive"],
+    features: search.features ?? [],
     notify: search.notify,
     enabled: search.enabled,
   };

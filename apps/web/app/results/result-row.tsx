@@ -2,7 +2,6 @@
 
 import { useRouter } from "next/navigation";
 import { useState } from "react";
-import { EyeOff } from "lucide-react";
 import { CarCard, type CarCardListing } from "@/components/car-card";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
@@ -16,8 +15,8 @@ export function ResultRow({
   listing,
   offerCount,
 }: {
-  matchId: string;
-  status: string;
+  matchId?: string;
+  status?: string;
   listing: CarCardListing;
   offerCount: number;
 }) {
@@ -26,6 +25,12 @@ export function ResultRow({
   const [hidden, setHidden] = useState(status === "hidden");
 
   async function hide() {
+    // Hiding is a `matches.status = 'hidden'` update, which only exists for
+    // the "Moje hledání" scope (a match row belongs to a search). In the
+    // "Všechna auta" scope there is no match row to hide, so this action
+    // isn't offered there (see car-card.tsx: `onHide` is only passed when
+    // `matchId` is set) — a known limitation, see README.md.
+    if (!matchId) return;
     const supabase = createSupabaseBrowserClient();
     if (!supabase) return;
     setBusy(true);
@@ -40,21 +45,12 @@ export function ResultRow({
   if (hidden) return null;
 
   return (
-    <div className="relative">
-      <CarCard
-        listing={{ ...listing, group_offer_count: offerCount }}
-        matchId={matchId}
-        favorite={status === "favorite"}
-      />
-      <button
-        type="button"
-        disabled={busy}
-        onClick={hide}
-        title="Skrýt nabídku"
-        className="absolute bottom-2 left-2 rounded-full bg-white/90 p-1.5 shadow-sm transition hover:scale-105 disabled:opacity-60"
-      >
-        <EyeOff className="h-4 w-4 text-gray-500" aria-hidden />
-      </button>
-    </div>
+    <CarCard
+      listing={{ ...listing, group_offer_count: offerCount }}
+      matchId={matchId}
+      favorite={status === "favorite"}
+      onHide={matchId ? hide : undefined}
+      hideBusy={busy}
+    />
   );
 }
