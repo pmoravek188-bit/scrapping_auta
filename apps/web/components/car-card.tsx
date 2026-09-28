@@ -87,10 +87,7 @@ export function CarCard({
             {listing.source}
           </span>
           {matchId && (
-            <div
-              className="absolute bottom-2 right-2"
-              onClick={(e) => e.preventDefault()}
-            >
+            <div className="absolute bottom-2 right-2">
               <FavoriteButton matchId={matchId} initialFavorite={!!favorite} />
             </div>
           )}
