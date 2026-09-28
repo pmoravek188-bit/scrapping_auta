@@ -9,6 +9,14 @@
  */
 import { normalizeMake, normalizeModel } from "./make-model.js";
 
+/** Coarse body/segment tag for a catalog model, used to power a future
+ * "jen dodávky" (vans only) style filter. Optional and purely additive —
+ * existing consumers that only read `slug`/`label` are unaffected. Not the
+ * same enum as `BodyType` (enums.ts): this tags the *model line* (e.g. "the
+ * Transit family is a van"), while `BodyType` tags an individual listing's
+ * actual body shape as scraped. */
+export type ModelSegment = "van" | "pickup" | "mpv";
+
 export interface MakeOption {
   slug: string;
   label: string;
@@ -17,9 +25,14 @@ export interface MakeOption {
 export interface ModelOption {
   slug: string;
   label: string;
+  /** Present only for vans/pickups/MPVs added to widen commercial-vehicle
+   * coverage; absent for ordinary passenger-car entries. */
+  segment?: ModelSegment;
 }
 
-/** Common makes seen on the Czech used-car market (EU + a few Asian/US brands). */
+/** Common makes seen on the Czech used-car market (EU + a few Asian/US
+ * brands), plus dedicated commercial/van/pickup makes (Iveco, MAN, Isuzu,
+ * SsangYong, Maxus, LDV, Piaggio, Dodge, RAM). */
 const RAW_MAKES: MakeOption[] = [
   { slug: "skoda", label: "Škoda" },
   { slug: "volkswagen", label: "Volkswagen" },
@@ -53,6 +66,16 @@ const RAW_MAKES: MakeOption[] = [
   { slug: "subaru", label: "Subaru" },
   { slug: "chevrolet", label: "Chevrolet" },
   { slug: "cupra", label: "Cupra" },
+  // Commercial / van / pickup specialist makes.
+  { slug: "iveco", label: "Iveco" },
+  { slug: "man", label: "MAN" },
+  { slug: "isuzu", label: "Isuzu" },
+  { slug: "ssangyong", label: "SsangYong" },
+  { slug: "maxus", label: "Maxus" },
+  { slug: "ldv", label: "LDV" },
+  { slug: "piaggio", label: "Piaggio" },
+  { slug: "dodge", label: "Dodge" },
+  { slug: "ram", label: "RAM" },
 ];
 
 export const MAKES: MakeOption[] = RAW_MAKES.map((m) => ({
@@ -60,15 +83,24 @@ export const MAKES: MakeOption[] = RAW_MAKES.map((m) => ({
   label: m.label,
 })).sort((a, b) => a.label.localeCompare(b.label, "cs"));
 
-function models(makeSlug: string, pairs: [string, string][]): ModelOption[] {
-  return pairs.map(([slug, label]) => ({
+/** A model tuple is `[slug, label]` or `[slug, label, segment]` when it's a
+ * van/pickup/MPV worth tagging for a future body-segment filter. */
+type ModelTuple = [string, string] | [string, string, ModelSegment];
+
+function models(makeSlug: string, pairs: ModelTuple[]): ModelOption[] {
+  return pairs.map(([slug, label, segment]) => ({
     slug: normalizeModel(slug) ?? slug,
     label,
+    ...(segment ? { segment } : {}),
   }));
 }
 
 /** Small static fallback of popular models per make, so the model dropdown
- * isn't empty before the scraper has found any listings for a make. */
+ * isn't empty before the scraper has found any listings for a make.
+ *
+ * Also doubles as the model dictionary `inferMakeModel` (infer.ts) scans
+ * listing titles against, so widening this list also improves make/model
+ * extraction for sources that don't expose structured model fields. */
 export const POPULAR_MODELS: Record<string, ModelOption[]> = {
   skoda: models("skoda", [
     ["octavia", "Octavia"],
@@ -82,6 +114,7 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["yeti", "Yeti"],
     ["citigo", "Citigo"],
     ["enyaq", "Enyaq"],
+    ["roomster", "Roomster", "mpv"],
   ]),
   volkswagen: models("volkswagen", [
     ["golf", "Golf"],
@@ -89,12 +122,24 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["polo", "Polo"],
     ["tiguan", "Tiguan"],
     ["touran", "Touran"],
+    ["touareg", "Touareg"],
     ["t-roc", "T-Roc"],
+    ["t-cross", "T-Cross"],
     ["up", "Up!"],
     ["arteon", "Arteon"],
     ["sharan", "Sharan"],
-    ["caddy", "Caddy"],
-    ["transporter", "Transporter"],
+    ["id-3", "ID.3"],
+    ["id-4", "ID.4"],
+    ["id-5", "ID.5"],
+    // Vans / MPVs / pickups.
+    ["caddy", "Caddy", "van"],
+    ["transporter", "Transporter", "van"],
+    ["multivan", "Multivan", "mpv"],
+    ["caravelle", "Caravelle", "van"],
+    ["california", "California", "van"],
+    ["crafter", "Crafter", "van"],
+    ["amarok", "Amarok", "pickup"],
+    ["id-buzz", "ID. Buzz", "van"],
   ]),
   bmw: models("bmw", [
     ["1-series", "Řada 1"],
@@ -103,8 +148,10 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["4-series", "Řada 4"],
     ["5-series", "Řada 5"],
     ["x1", "X1"],
+    ["x2", "X2"],
     ["x3", "X3"],
     ["x5", "X5"],
+    ["x6", "X6"],
   ]),
   "mercedes-benz": models("mercedes-benz", [
     ["a-class", "Třída A"],
@@ -113,16 +160,31 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["e-class", "Třída E"],
     ["glc", "GLC"],
     ["gla", "GLA"],
-    ["vito", "Vito"],
+    // Vans / MPVs / pickups. Sources write the V-Class both as "Třída V"
+    // and as "V-Klasse"/"V-Class" — normalizeModel produces different
+    // slugs for each (no shared alias table), so both are catalogued.
+    ["vito", "Vito", "van"],
+    ["v-klasse", "Třída V (V-Klasse)", "mpv"],
+    ["trida-v", "Třída V (V-Klasse)", "mpv"],
+    ["viano", "Viano", "van"],
+    ["sprinter", "Sprinter", "van"],
+    ["citan", "Citan", "van"],
+    ["t-klasse", "Třída T (T-Klasse)", "van"],
+    ["eqv", "EQV", "van"],
+    ["evito", "eVito", "van"],
+    ["x-klasse", "Třída X (X-Class)", "pickup"],
   ]),
   audi: models("audi", [
+    ["a1", "A1"],
     ["a3", "A3"],
     ["a4", "A4"],
     ["a5", "A5"],
     ["a6", "A6"],
+    ["q2", "Q2"],
     ["q3", "Q3"],
     ["q5", "Q5"],
     ["q7", "Q7"],
+    ["q8", "Q8"],
   ]),
   ford: models("ford", [
     ["fiesta", "Fiesta"],
@@ -130,8 +192,18 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["mondeo", "Mondeo"],
     ["kuga", "Kuga"],
     ["puma", "Puma"],
-    ["transit", "Transit"],
+    ["edge", "Edge"],
     ["s-max", "S-Max"],
+    ["galaxy", "Galaxy", "mpv"],
+    // Vans / MPVs / pickups.
+    ["transit", "Transit", "van"],
+    ["transit-custom", "Transit Custom", "van"],
+    ["transit-connect", "Transit Connect", "van"],
+    ["transit-courier", "Transit Courier", "van"],
+    ["tourneo-custom", "Tourneo Custom", "mpv"],
+    ["tourneo-connect", "Tourneo Connect", "mpv"],
+    ["tourneo-courier", "Tourneo Courier", "mpv"],
+    ["ranger", "Ranger", "pickup"],
   ]),
   opel: models("opel", [
     ["astra", "Astra"],
@@ -140,13 +212,19 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["mokka", "Mokka"],
     ["zafira", "Zafira"],
     ["meriva", "Meriva"],
+    // Vans / MPVs.
+    ["vivaro", "Vivaro", "van"],
+    ["movano", "Movano", "van"],
+    ["combo", "Combo", "van"],
+    ["zafira-life", "Zafira Life", "mpv"],
   ]),
   seat: models("seat", [
     ["ibiza", "Ibiza"],
     ["leon", "Leon"],
     ["ateca", "Ateca"],
     ["arona", "Arona"],
-    ["alhambra", "Alhambra"],
+    ["tarraco", "Tarraco"],
+    ["alhambra", "Alhambra", "mpv"],
   ]),
   hyundai: models("hyundai", [
     ["i20", "i20"],
@@ -154,6 +232,10 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["tucson", "Tucson"],
     ["santa-fe", "Santa Fe"],
     ["kona", "Kona"],
+    // Vans / MPVs.
+    ["h-1", "H-1", "van"],
+    ["h350", "H350", "van"],
+    ["staria", "Staria", "mpv"],
   ]),
   kia: models("kia", [
     ["ceed", "Ceed"],
@@ -161,6 +243,7 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["rio", "Rio"],
     ["sorento", "Sorento"],
     ["picanto", "Picanto"],
+    ["carnival", "Carnival", "mpv"],
   ]),
   toyota: models("toyota", [
     ["yaris", "Yaris"],
@@ -169,6 +252,12 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["aygo", "Aygo"],
     ["auris", "Auris"],
     ["avensis", "Avensis"],
+    // Vans / MPVs / pickups.
+    ["proace", "Proace", "van"],
+    ["proace-city", "Proace City", "van"],
+    ["proace-verso", "Proace Verso", "mpv"],
+    ["hiace", "Hiace", "van"],
+    ["hilux", "Hilux", "pickup"],
   ]),
   renault: models("renault", [
     ["clio", "Clio"],
@@ -176,6 +265,12 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["captur", "Captur"],
     ["scenic", "Scenic"],
     ["kadjar", "Kadjar"],
+    ["espace", "Espace", "mpv"],
+    // Vans.
+    ["trafic", "Trafic", "van"],
+    ["master", "Master", "van"],
+    ["kangoo", "Kangoo", "van"],
+    ["express", "Express", "van"],
   ]),
   peugeot: models("peugeot", [
     ["208", "208"],
@@ -183,23 +278,41 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["2008", "2008"],
     ["3008", "3008"],
     ["508", "508"],
+    // Vans / MPVs.
+    ["expert", "Expert", "van"],
+    ["boxer", "Boxer", "van"],
+    ["partner", "Partner", "van"],
+    ["traveller", "Traveller", "mpv"],
+    ["rifter", "Rifter", "mpv"],
   ]),
   citroen: models("citroen", [
     ["c3", "C3"],
     ["c4", "C4"],
     ["c5", "C5"],
-    ["berlingo", "Berlingo"],
+    // Vans / MPVs.
+    ["berlingo", "Berlingo", "van"],
+    ["jumpy", "Jumpy", "van"],
+    ["jumper", "Jumper", "van"],
+    ["spacetourer", "SpaceTourer", "mpv"],
   ]),
   fiat: models("fiat", [
     ["500", "500"],
     ["panda", "Panda"],
     ["tipo", "Tipo"],
     ["punto", "Punto"],
+    // Vans / MPVs.
+    ["ducato", "Ducato", "van"],
+    ["scudo", "Scudo", "van"],
+    ["talento", "Talento", "van"],
+    ["doblo", "Doblò", "van"],
+    ["fiorino", "Fiorino", "van"],
+    ["qubo", "Qubo", "mpv"],
   ]),
   volvo: models("volvo", [
     ["v40", "V40"],
     ["v60", "V60"],
     ["v90", "V90"],
+    ["xc40", "XC40"],
     ["xc60", "XC60"],
     ["xc90", "XC90"],
   ]),
@@ -207,13 +320,23 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["mazda2", "Mazda2"],
     ["mazda3", "Mazda3"],
     ["mazda6", "Mazda6"],
+    ["cx-3", "CX-3"],
     ["cx-5", "CX-5"],
+    ["cx-30", "CX-30"],
   ]),
   nissan: models("nissan", [
     ["qashqai", "Qashqai"],
     ["juke", "Juke"],
     ["micra", "Micra"],
     ["x-trail", "X-Trail"],
+    // Vans / pickup.
+    ["primastar", "Primastar", "van"],
+    ["nv200", "NV200", "van"],
+    ["nv300", "NV300", "van"],
+    ["nv400", "NV400", "van"],
+    ["interstar", "Interstar", "van"],
+    ["townstar", "Townstar", "van"],
+    ["navara", "Navara", "pickup"],
   ]),
   honda: models("honda", [
     ["civic", "Civic"],
@@ -224,6 +347,7 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["outlander", "Outlander"],
     ["asx", "ASX"],
     ["lancer", "Lancer"],
+    ["l200", "L200", "pickup"],
   ]),
   suzuki: models("suzuki", [
     ["swift", "Swift"],
@@ -234,11 +358,14 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["duster", "Duster"],
     ["sandero", "Sandero"],
     ["logan", "Logan"],
+    ["dokker", "Dokker", "van"],
+    ["jogger", "Jogger", "mpv"],
   ]),
   jeep: models("jeep", [
     ["renegade", "Renegade"],
     ["compass", "Compass"],
     ["grand-cherokee", "Grand Cherokee"],
+    ["gladiator", "Gladiator", "pickup"],
   ]),
   mini: models("mini", [
     ["cooper", "Cooper"],
@@ -286,6 +413,34 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["leon", "Leon"],
     ["ateca", "Ateca"],
     ["born", "Born"],
+  ]),
+  // Commercial / van / pickup specialist makes.
+  iveco: models("iveco", [["daily", "Daily", "van"]]),
+  man: models("man", [["tge", "TGE", "van"]]),
+  isuzu: models("isuzu", [["d-max", "D-Max", "pickup"]]),
+  ssangyong: models("ssangyong", [
+    ["musso", "Musso", "pickup"],
+    ["korando", "Korando"],
+    ["rexton", "Rexton"],
+  ]),
+  maxus: models("maxus", [
+    ["deliver-9", "Deliver 9", "van"],
+    ["edeliver-3", "eDeliver 3", "van"],
+    ["edeliver-9", "eDeliver 9", "van"],
+    ["t90", "T90", "pickup"],
+  ]),
+  ldv: models("ldv", [
+    ["v80", "V80", "van"],
+    ["g10", "G10", "van"],
+  ]),
+  piaggio: models("piaggio", [["porter", "Porter", "van"]]),
+  dodge: models("dodge", [
+    ["journey", "Journey", "mpv"],
+    ["caravan", "Caravan", "mpv"],
+  ]),
+  ram: models("ram", [
+    ["1500", "1500", "pickup"],
+    ["2500", "2500", "pickup"],
   ]),
 };
 
