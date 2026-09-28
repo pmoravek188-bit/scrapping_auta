@@ -1,0 +1,42 @@
+{
+  "total": 2,
+  "results": [
+    {
+      "advert_id": 111222333,
+      "seo_url": "/detail/skoda-octavia-111222333",
+      "name": "Škoda Octavia 2.0 TDI Style",
+      "manufacturer_cb": { "name": "Škoda" },
+      "model_cb": { "name": "Octavia" },
+      "model_variant": "2.0 TDI Style",
+      "manufacturing_date": "2019-05-01",
+      "tachometer": 87000,
+      "price": 359900,
+      "fuel_cb": { "name": "nafta" },
+      "gearbox_cb": { "name": "manuální" },
+      "power": 110,
+      "body_cb": { "name": "kombi" },
+      "color_cb": { "name": "šedá" },
+      "locality": { "district": "Praha" },
+      "seller_type": "S",
+      "vin": null,
+      "images": [{ "url": "https://img.sauto.cz/1.jpg" }]
+    },
+    {
+      "advert_id": 444555666,
+      "url": "https://www.sauto.cz/detail/bmw-3-444555666",
+      "name": "BMW Řada 3 320d",
+      "manufacturer_cb": { "name": "BMW" },
+      "model_cb": { "name": "Řada 3" },
+      "manufacturing_date": 2018,
+      "tachometer": 120000,
+      "price": 420000,
+      "fuel_cb": { "name": "diesel" },
+      "gearbox_cb": { "name": "automat" },
+      "power": 140,
+      "body_cb": { "name": "sedan" },
+      "seller_type": "P",
+      "images": []
+    },
+    { "advert_id": null, "name": "broken item without id" }
+  ]
+}

@@ -1,0 +1,38 @@
+{
+  "totalCount": 2,
+  "items": [
+    {
+      "id": 9001,
+      "slug": "skoda-octavia-2020-9001",
+      "make": { "name": "Škoda" },
+      "model": { "name": "Octavia" },
+      "variant": "2.0 TDI DSG",
+      "firstRegistration": "2020-03-01",
+      "mileage": 45000,
+      "price": { "amount": 15900, "currency": "EUR" },
+      "fuelType": "diesel",
+      "transmissionType": "automatic",
+      "power": { "kw": 110 },
+      "bodyType": "combi",
+      "color": "black",
+      "country": "DE",
+      "vin": "TMBJJ7NE1L0123456",
+      "images": ["https://img.carvago.com/9001-1.jpg"]
+    },
+    {
+      "id": 9002,
+      "slug": "audi-a4-2019-9002",
+      "make": { "name": "Audi" },
+      "model": { "name": "A4" },
+      "firstRegistration": 2019,
+      "mileage": 60000,
+      "price": { "amount": 18500, "currency": "EUR" },
+      "fuelType": "diesel",
+      "transmissionType": "manual",
+      "power": { "kw": 140 },
+      "bodyType": "sedan",
+      "country": "NL"
+    },
+    { "slug": "broken-no-id" }
+  ]
+}
