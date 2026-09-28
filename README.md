@@ -321,13 +321,46 @@ RPC) — počet `matches` napříč všemi hledáními uživatele novějších n
 ## Runner (`packages/scrapers/src/runner.ts`)
 
 Pro každý zapnutý zdroj: pro každé zapnuté hledání, které daný zdroj
-používá (prázdné `sources[]` = všechny), zavolá adaptér, normalizuje
-výsledky, upsertne do `listings` (klíč `source`+`source_id`), při změně ceny
-zapíše řádek do `price_history`, spočítá/najde `group_id` podle
-fingerprintu, a pro každé hledání ověří shodu přes `matchesSearch` a
-upsertne `matches`. Inzeráty neviděné 3+ dny se označí `is_active=false`. Na
-konci běhu pošle e-mailový souhrn nových shod (`notified_at is null`) a
-označí je jako odeslané.
+používá (prázdné `sources[]` = všechny), zavolá adaptér a normalizuje
+výsledky. Z normalizovaných inzerátů se přes `selectListingsToStore`
+(`packages/scrapers/src/selection.ts`) vyberou jen ty, které odpovídají
+aspoň jednomu z těchto hledání (`matchesSearch`) — jen ty se dál upsertují
+do `listings` (klíč `source`+`source_id`), při změně ceny se jim zapíše
+řádek do `price_history`, spočítá/najde se jim `group_id` podle
+fingerprintu a upsertne `matches`. V `--dry-run` se loguje jak počet
+nalezených, tak počet těch, co by se uložily (viz „Co se ukládá do
+databáze“ níže). Inzeráty neviděné 3+ dny se označí `is_active=false`. Na
+konci celého běhu (ne při `--source`) se navíc smažou inzeráty, které
+neodpovídají žádnému hledání a nebyly viděné 3+ dny (`cleanupUnmatchedListings`)
+— `price_history`/`matches` mažou kaskádově. Na úplný závěr pošle
+e-mailový souhrn nových shod (`notified_at is null`) a označí je jako
+odeslané.
+
+### Co se ukládá do databáze
+
+Do databáze (`listings`, `price_history`, `matches`) se ukládají **jen
+inzeráty, které odpovídají aspoň jednomu uloženému a zapnutému hledání** —
+ne všechno, co scraper na daném zdroji najde. Důvod je prostý: bez filtru by
+tabulka `listings` rostla nekontrolovaně počtem inzerátů napříč všemi
+bazary, i když je nikdo nikdy neuvidí.
+
+Z toho plynou dvě praktická pravidla:
+
+- **Rozšíření hledání (nový/upravený filtr, přidaný zdroj) se projeví až po
+  dalším scrapingu.** Inzeráty, které nově odpovídají rozšířenému hledání,
+  ale scraper je dřív zahazoval (protože tehdy neodpovídaly ničemu), se
+  objeví až po dalším běhu, kdy si je scraper znovu stáhne ze zdroje a
+  tentokrát projdou filtrem. Proto tlačítko „Spustit scraping“ webová
+  aplikace **po uložení/úpravě hledání spouští automaticky** (viz
+  „Okamžitý rematch“ výše — ten se navíc přes existující `matches` dá
+  spočítat okamžitě pro inzeráty, co v DB už jsou, ale nové inzeráty ze
+  zdroje potřebují opravdový scraping).
+- **Inzerát, který přestane odpovídat všem hledáním (hledání se zúží nebo
+  smaže), se dál needituje** — poslední uložený stav (cena, `last_seen`,
+  …) zůstane zmrazený, protože ho runner přestane znovu zapisovat. Po 3+
+  dnech ho úklid na konci plného běhu (viz výše) smaže i s historií ceny.
+  Krátká prodleva 3 dnů je záměrná — aby čerstvě stažený inzerát nezmizel
+  hned po úpravě hledání, než se stačí spočítat nový rematch.
 
 ## Známá omezení / co zbývá
 

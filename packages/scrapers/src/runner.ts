@@ -13,10 +13,13 @@ import { getAdapter } from "./registry.js";
 import { fetchEurCzkRate } from "./exchange-rate.js";
 import { sendMatchDigestEmail, type NotifySearchGroup } from "./notify/email.js";
 import { MAX_RESULT_PAGES } from "./http.js";
+import { selectListingsToStore } from "./selection.js";
 
 export type DbClient = SupabaseClient<Database>;
 
 const INACTIVE_AFTER_DAYS = 3;
+const CLEANUP_UNMATCHED_AFTER_DAYS = 3;
+const CLEANUP_BATCH_SIZE = 200;
 
 export interface RunOptions {
   dryRun?: boolean;
@@ -209,28 +212,31 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
         normalizeListing(raw, { source: sourceId, eurCzkRate })
       );
 
+      // Only listings matching at least one enabled saved search that uses
+      // this source get persisted (product decision: the DB holds matches
+      // only, not everything the scraper fetches — see README). `--query`
+      // lets you dry-run against a hypothetical saved search instead of the
+      // ones actually stored in the DB.
+      const searchQueriesForSource: SearchQuery[] = overrideQuery
+        ? [overrideQuery]
+        : db
+          ? relevantSearches.map(toSearchQuery)
+          : [];
+      const toStore = selectListingsToStore(normalized, searchQueriesForSource);
+
       if (dryRun || !db) {
-        console.log(`[runner] [dry-run] ${sourceId}: ${normalized.length} listings`);
-        if (overrideQuery) {
-          const matched = normalized.filter((listing) => matchesSearch(listing, overrideQuery));
+        console.log(
+          `[runner] [dry-run] ${sourceId}: fetched ${normalized.length}, ${toStore.length} match a saved search (would be stored)`
+        );
+        for (const listing of toStore.slice(0, 5)) {
           console.log(
-            `[runner] [dry-run] ${sourceId}: ${matched.length}/${normalized.length} listings match --query`
-          );
-          for (const listing of matched.slice(0, 5)) {
-            console.log(
-              `  [match] ${listing.title} | ${listing.priceCzk ?? "?"} Kč | ${listing.year ?? "?"} | ${listing.mileageKm ?? "?"} km`
-            );
-          }
-        }
-        for (const listing of normalized.slice(0, 5)) {
-          console.log(
-            `  - ${listing.title} | ${listing.priceCzk ?? "?"} Kč | ${listing.year ?? "?"} | ${listing.mileageKm ?? "?"} km`
+            `  [match] ${listing.title} | ${listing.priceCzk ?? "?"} Kč | ${listing.year ?? "?"} | ${listing.mileageKm ?? "?"} km`
           );
         }
         continue;
       }
 
-      for (const listing of normalized) {
+      for (const listing of toStore) {
         const { data: existing } = await db
           .from("listings")
           .select("id, price_czk, group_id")
@@ -344,8 +350,72 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
     const cutoff = new Date(Date.now() - INACTIVE_AFTER_DAYS * 24 * 60 * 60 * 1000).toISOString();
     await db.from("listings").update({ is_active: false }).lt("last_seen", cutoff).eq("is_active", true);
 
+    // Only a full run (all sources) gets to decide a listing is genuinely
+    // unmatched — a `--source` run only ever sees a slice of the enabled
+    // searches' sources, so it can't tell "not matched by this source's
+    // searches" from "not matched by any search at all".
+    if (!opts.sourceFilter) {
+      await cleanupUnmatchedListings(db);
+    }
+
     await notifyNewMatches(db);
   }
+}
+
+/**
+ * Deletes listings that no search currently matches (no row in `matches`)
+ * and that haven't been (re-)fetched in a while. The age cutoff exists so a
+ * listing that briefly stops matching right after a search is edited isn't
+ * lost immediately — it gets a few days' grace before being swept up here.
+ *
+ * `price_history`/`matches` rows for a deleted listing cascade-delete via
+ * their FK (`on delete cascade`, see supabase/migrations/20260928120000_init.sql),
+ * so deleting from `listings` is sufficient.
+ *
+ * Paginates with a keyset cursor on `id` (not offset) so deletions made
+ * mid-scan never cause rows to be skipped or re-scanned.
+ */
+async function cleanupUnmatchedListings(db: DbClient): Promise<void> {
+  const cutoff = new Date(
+    Date.now() - CLEANUP_UNMATCHED_AFTER_DAYS * 24 * 60 * 60 * 1000
+  ).toISOString();
+  let totalDeleted = 0;
+  let cursor: string | null = null;
+
+  for (;;) {
+    let query = db
+      .from("listings")
+      .select("id, matches(id)")
+      .lt("last_seen", cutoff)
+      .order("id", { ascending: true })
+      .limit(CLEANUP_BATCH_SIZE);
+    if (cursor) query = query.gt("id", cursor);
+
+    const { data, error } = await query;
+    if (error) {
+      console.warn("[runner] cleanup: failed to load candidate listings:", error.message);
+      break;
+    }
+    const rows = (data ?? []) as unknown as Array<{ id: string; matches: { id: string }[] | null }>;
+    if (rows.length === 0) break;
+    cursor = rows[rows.length - 1]!.id;
+
+    const unmatchedIds = rows.filter((r) => !r.matches || r.matches.length === 0).map((r) => r.id);
+    if (unmatchedIds.length > 0) {
+      const { error: deleteError } = await db.from("listings").delete().in("id", unmatchedIds);
+      if (deleteError) {
+        console.warn("[runner] cleanup: failed to delete listings batch:", deleteError.message);
+      } else {
+        totalDeleted += unmatchedIds.length;
+      }
+    }
+
+    if (rows.length < CLEANUP_BATCH_SIZE) break;
+  }
+
+  console.log(
+    `[runner] cleanup: deleted ${totalDeleted} listing(s) unmatched by any search and not seen for ${CLEANUP_UNMATCHED_AFTER_DAYS}+ days`
+  );
 }
 
 async function notifyNewMatches(db: DbClient): Promise<void> {
