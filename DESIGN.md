@@ -122,7 +122,7 @@ scrapping_auta/
 ├── searches.example.yaml
 ├── .env.example            # TELEGRAM_TOKEN, SMTP_*, DB_PATH ...
 ├── docker-compose.yml
-├── src/autoscout/          # název balíčku např. "carhunter"
+├── src/carhunter/
 │   ├── config.py
 │   ├── models.py           # SQLModel tabulky + Pydantic schémata
 │   ├── db.py
