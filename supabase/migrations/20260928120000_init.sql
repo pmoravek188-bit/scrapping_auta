@@ -154,28 +154,28 @@ alter table public.exchange_rates enable row level security;
 
 -- searches: user can fully manage their own rows only
 create policy "searches_select_own" on public.searches
-  for select using (auth.uid() = user_id);
+  for select using ((select auth.uid()) = user_id);
 create policy "searches_insert_own" on public.searches
-  for insert with check (auth.uid() = user_id);
+  for insert with check ((select auth.uid()) = user_id);
 create policy "searches_update_own" on public.searches
-  for update using (auth.uid() = user_id) with check (auth.uid() = user_id);
+  for update using ((select auth.uid()) = user_id) with check ((select auth.uid()) = user_id);
 create policy "searches_delete_own" on public.searches
-  for delete using (auth.uid() = user_id);
+  for delete using ((select auth.uid()) = user_id);
 
 -- matches: user can manage matches belonging to their own searches
 create policy "matches_select_own" on public.matches
   for select using (
-    exists (select 1 from public.searches s where s.id = search_id and s.user_id = auth.uid())
+    exists (select 1 from public.searches s where s.id = search_id and s.user_id = (select auth.uid()))
   );
 create policy "matches_update_own" on public.matches
   for update using (
-    exists (select 1 from public.searches s where s.id = search_id and s.user_id = auth.uid())
+    exists (select 1 from public.searches s where s.id = search_id and s.user_id = (select auth.uid()))
   ) with check (
-    exists (select 1 from public.searches s where s.id = search_id and s.user_id = auth.uid())
+    exists (select 1 from public.searches s where s.id = search_id and s.user_id = (select auth.uid()))
   );
 create policy "matches_delete_own" on public.matches
   for delete using (
-    exists (select 1 from public.searches s where s.id = search_id and s.user_id = auth.uid())
+    exists (select 1 from public.searches s where s.id = search_id and s.user_id = (select auth.uid()))
   );
 -- no insert policy for matches: only the runner (service_role) creates matches
 
@@ -183,12 +183,12 @@ create policy "matches_delete_own" on public.matches
 -- read-only for any authenticated user, writes only via service_role
 -- (service_role bypasses RLS entirely, so no insert/update/delete policies needed)
 create policy "listings_select_authenticated" on public.listings
-  for select using (auth.role() = 'authenticated');
+  for select using ((select auth.role()) = 'authenticated');
 create policy "price_history_select_authenticated" on public.price_history
-  for select using (auth.role() = 'authenticated');
+  for select using ((select auth.role()) = 'authenticated');
 create policy "sources_select_authenticated" on public.sources
-  for select using (auth.role() = 'authenticated');
+  for select using ((select auth.role()) = 'authenticated');
 create policy "scrape_runs_select_authenticated" on public.scrape_runs
-  for select using (auth.role() = 'authenticated');
+  for select using ((select auth.role()) = 'authenticated');
 create policy "exchange_rates_select_authenticated" on public.exchange_rates
-  for select using (auth.role() = 'authenticated');
+  for select using ((select auth.role()) = 'authenticated');

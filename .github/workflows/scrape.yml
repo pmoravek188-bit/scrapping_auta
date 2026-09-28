@@ -53,9 +53,10 @@ jobs:
           RESEND_API_KEY: ${{ secrets.RESEND_API_KEY }}
           NOTIFY_EMAIL_TO: ${{ secrets.NOTIFY_EMAIL_TO }}
           NOTIFY_EMAIL_FROM: ${{ secrets.NOTIFY_EMAIL_FROM }}
+          SOURCE_INPUT: ${{ inputs.source }}
         run: |
-          if [ -n "${{ inputs.source }}" ]; then
-            pnpm scrape -- --source=${{ inputs.source }}
+          if [ -n "$SOURCE_INPUT" ]; then
+            pnpm scrape -- "--source=$SOURCE_INPUT"
           else
             pnpm scrape
           fi
