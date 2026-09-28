@@ -17,26 +17,57 @@ const baseQuery: SearchQuery = {
 
 describe("sauto adapter", () => {
   it("builds a search URL with the given filters", () => {
-    const url = buildSautoUrl({ ...baseQuery, make: "skoda", priceTo: 300000 }, 0);
-    expect(url).toContain("manufacturer_cb_id=skoda");
+    const url = buildSautoUrl(
+      {
+        ...baseQuery,
+        make: "Skoda",
+        model: "Octavia",
+        priceTo: 300000,
+        fuel: ["diesel"],
+        transmission: "automatic",
+      },
+      0
+    );
+    expect(url).toContain("category_id=838");
+    expect(url).toContain("manufacturer_model_seo=skoda%3Aoctavia");
     expect(url).toContain("price_to=300000");
+    expect(url).toContain("fuel_seo=nafta");
+    expect(url).toContain("gearbox_seo=automaticka");
     expect(url).toContain("offset=0");
+  });
+
+  it("omits filters with no known sauto mapping", () => {
+    const url = buildSautoUrl({ ...baseQuery, fuel: ["plugin_hybrid"] }, 0);
+    expect(url).not.toContain("fuel_seo");
   });
 
   it("parses listings from the API response, skipping broken items", () => {
     const items = parseSautoResponse(fixture);
-    expect(items).toHaveLength(2);
+    expect(items).toHaveLength(3);
+
     expect(items[0]).toMatchObject({
-      sourceId: "111222333",
-      make: "Škoda",
-      model: "Octavia",
-      mileageKm: 87000,
-      price: 359900,
-      year: 2019,
+      sourceId: "211180971",
+      make: "Hyundai",
+      model: "i30",
+      variant: "1.6 MPI, ČR, nové rozvody",
+      mileageKm: 199000,
+      price: 134900,
+      year: 2013,
+      fuel: "Benzín",
+      transmission: "Manuální",
+      sellerType: "private",
     });
-    expect(items[0].url).toBe("https://www.sauto.cz/detail/skoda-octavia-111222333");
-    expect(items[1].url).toBe("https://www.sauto.cz/detail/bmw-3-444555666");
+    expect(items[0].url).toBe("https://www.sauto.cz/osobni/detail/hyundai/i30/211180971");
+    expect(items[0].imageUrls[0]).toBe(
+      "https://d19-a.sdn.cz/d_19/c_img_qF_C/k0OqwCKRDgcHsBVhH5hWw4/61af.jpeg"
+    );
+
+    // private seller: premise is null, only `user` is present
     expect(items[1].sellerType).toBe("private");
+
+    // dealer: non-null `premise`
+    expect(items[2].sellerType).toBe("dealer");
+    expect(items[2].url).toBe("https://www.sauto.cz/osobni/detail/volkswagen/id3/211013553");
   });
 
   it("returns an empty array for an unexpected response shape", () => {

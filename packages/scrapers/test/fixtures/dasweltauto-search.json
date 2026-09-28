@@ -1,0 +1,49 @@
+{
+  "count": 2,
+  "resultListPage": {
+    "number": 1,
+    "size": 2,
+    "content": [
+      {
+        "id": {
+          "dealerId": "51057",
+          "vehicleId": "00191",
+          "fiveDigitsDealerId": "51057",
+          "fiveDigitsVehicleId": "00191"
+        },
+        "imageUrls": ["https://vmscdn.porscheinformatik.com/example/be3d0801.jpg"],
+        "price": 348000,
+        "powerKw": 81,
+        "modelVariant": "Škoda Scala Style 1.0 TSI",
+        "mileage": 120740,
+        "registration": "2022-12-21",
+        "dealer": { "name": "VWFS - Porsche Praha Prosek", "city": "Praha 8" },
+        "brand": "Škoda",
+        "fuelText": "Benzín",
+        "transmission": "Manuální převodovka",
+        "bodyType": "hatchback",
+        "vin": "TMBER6NW7P3055713"
+      },
+      {
+        "id": {
+          "dealerId": "51057",
+          "vehicleId": "00195",
+          "fiveDigitsDealerId": "51057",
+          "fiveDigitsVehicleId": "00195"
+        },
+        "imageUrls": [],
+        "price": 374000,
+        "powerKw": 110,
+        "modelVariant": "Škoda Octavia Combi Ambition 2.0 TDI",
+        "mileage": 154878,
+        "registration": "2022-11-02",
+        "dealer": { "name": "VWFS - Porsche Praha Prosek", "city": "Praha 8" },
+        "brand": "Škoda",
+        "fuelText": "Nafta",
+        "transmission": "Automatická převodovka",
+        "bodyType": "combi",
+        "vin": "TMBJG9NE7N0123456"
+      }
+    ]
+  }
+}

@@ -1,17 +1,48 @@
-<!doctype html>
-<html>
-  <body>
-    <div class="inzeraty">
-      <h2 class="nadpis"><a href="/inzerat/12345/skoda-octavia-2-0-tdi.php">Škoda Octavia 2.0 TDI, rok 2017, najeto 95000 km</a></h2>
-      <div class="popis">Prodám Škodu Octavii, najeto 95000 km, rok výroby 2017, nová STK.</div>
-      <div class="inzeratycena">189 900 Kč</div>
-      <div class="inzeratylok">Praha</div>
-    </div>
-    <div class="inzeraty">
-      <h2 class="nadpis"><a href="/inzerat/67890/vw-passat.php">VW Passat 2.0 TDI Combi</a></h2>
-      <div class="popis">Passat combi, najeto 150000 km, rok 2015.</div>
-      <div class="inzeratycena">159 000 Kč</div>
-      <div class="inzeratylok">Brno</div>
-    </div>
-  </body>
-</html>
+<!-- Trimmed from a real auto.bazos.cz /skoda/ rubric response (2026-09-28).
+     Note: Bazoš's own markup is missing a closing </div> after the
+     title/description block, so price/location end up nested inside
+     `.inzeraty.inzeratyflex` once parsed - this fixture intentionally
+     reproduces that quirk instead of "fixing" it, since our parser relies
+     on cheerio parsing it the same way it parses the real page. -->
+<div class="listainzerat inzeratyflex">
+<div class="inzeratynadpis">header row</div>
+<div class="inzeratycena">Cena</div>
+<div class="inzeratylok">Lokalita</div>
+</div>
+
+<div class="inzeraty inzeratyflex">
+<div class="inzeratynadpis"><a href="/inzerat/224366040/skoda-octavia-20tsi-206kw-dsg-4x4-21tkm.php"><img src="x.jpg"></a>
+<h2 class=nadpis><a href="/inzerat/224366040/skoda-octavia-20tsi-206kw-dsg-4x4-21tkm.php">Škoda Octavia Sportline 2.0TSI 206kW DSG 4x4 21tkm</a></h2><span class=velikost10> - [28.9. 2026]</span><br>
+<div class=popis>ŠKODA OCTAVIA SPORTLINE 2.0 TSI 206 kW DSG 4x4 / 2019 / 21tkm
+
+Nabízíme k prodeji velmi atraktivní Škodu Octavia Sportline.</div><br><br>
+</div>
+<div class="inzeratycena"><b><span translate="no">  724 990 Kč</span></b></div>
+<div class="inzeratylok">Olomouc<br>779 00</div>
+<div class="inzeratyview">498 x</div>
+<div class="inzeratyakce">akce</div>
+</div>
+
+<div class="inzeraty inzeratyflex">
+<div class="inzeratynadpis"><a href="/inzerat/224359337/skoda-fabia-16-tdi-85kw.php"><img src="y.jpg"></a>
+<h2 class=nadpis><a href="/inzerat/224359337/skoda-fabia-16-tdi-85kw.php">ŠKODA FABIA 1.6 TDI 85KW STYLE VIRTUAL</a></h2><span class=velikost10> - [28.9. 2026]</span><br>
+<div class=popis>Škoda Fabia 1.6 Tdi 85 Kw
+
+r.v. 2017 | 95 000 km | Servisní knížka</div><br><br>
+</div>
+<div class="inzeratycena"><b><span translate="no">  189 900 Kč</span></b></div>
+<div class="inzeratylok">Praha<br>253 03</div>
+<div class="inzeratyview">905 x</div>
+<div class="inzeratyakce">akce</div>
+</div>
+
+<div class="inzeraty inzeratyflex">
+<div class="inzeratynadpis"><a href="/inzerat/224111222/zkusil-jsem-vsechny-led-za-vas.php"><img src="z.jpg"></a>
+<h2 class=nadpis><a href="/inzerat/224111222/zkusil-jsem-vsechny-led-za-vas.php">ZKUSIL JSEM VŠECHNY LED ZA VÁS</a></h2><span class=velikost10> - [28.9. 2026]</span><br>
+<div class=popis>LED žárovky do všech aut, cena za sadu.</div><br><br>
+</div>
+<div class="inzeratycena"><b><span translate="no">  499 Kč</span></b></div>
+<div class="inzeratylok">Brno<br>602 00</div>
+<div class="inzeratyview">12 x</div>
+<div class="inzeratyakce">akce</div>
+</div>

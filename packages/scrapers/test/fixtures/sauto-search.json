@@ -1,42 +1,65 @@
 {
-  "total": 2,
+  "pagination": { "limit": 3, "offset": 0, "total": 106382 },
   "results": [
     {
-      "advert_id": 111222333,
-      "seo_url": "/detail/skoda-octavia-111222333",
-      "name": "Škoda Octavia 2.0 TDI Style",
-      "manufacturer_cb": { "name": "Škoda" },
-      "model_cb": { "name": "Octavia" },
-      "model_variant": "2.0 TDI Style",
-      "manufacturing_date": "2019-05-01",
-      "tachometer": 87000,
-      "price": 359900,
-      "fuel_cb": { "name": "nafta" },
-      "gearbox_cb": { "name": "manuální" },
-      "power": 110,
-      "body_cb": { "name": "kombi" },
-      "color_cb": { "name": "šedá" },
-      "locality": { "district": "Praha" },
-      "seller_type": "S",
-      "vin": null,
-      "images": [{ "url": "https://img.sauto.cz/1.jpg" }]
+      "additional_model_name": "1.6 MPI, ČR, nové rozvody",
+      "fuel_cb": { "name": "Benzín", "seo_name": "benzin", "value": 1 },
+      "gearbox_cb": { "name": "Manuální", "seo_name": "manualni", "value": 1 },
+      "id": 211180971,
+      "images": [
+        { "url": "//d19-a.sdn.cz/d_19/c_img_qF_C/k0OqwCKRDgcHsBVhH5hWw4/61af.jpeg" },
+        { "url": "//d19-a.sdn.cz/d_19/c_img_qF_C/nOdL4BtPEyvOo9pGH5hWyX/f09e.jpeg" }
+      ],
+      "in_operation_date": "2013-04-01",
+      "locality": { "district": "Hlavní město Praha", "region": "Hlavní město Praha" },
+      "manufacturer_cb": { "name": "Hyundai", "seo_name": "hyundai", "value": 31 },
+      "manufacturing_date": "2012-09-01",
+      "model_cb": { "name": "i30", "seo_name": "i30", "value": 1376 },
+      "name": "Hyundai i30, 1.6 MPI, ČR, nové rozvody",
+      "premise": null,
+      "price": 134900,
+      "tachometer": 199000,
+      "user": { "id": 3583645 }
     },
     {
-      "advert_id": 444555666,
-      "url": "https://www.sauto.cz/detail/bmw-3-444555666",
-      "name": "BMW Řada 3 320d",
-      "manufacturer_cb": { "name": "BMW" },
-      "model_cb": { "name": "Řada 3" },
-      "manufacturing_date": 2018,
-      "tachometer": 120000,
-      "price": 420000,
-      "fuel_cb": { "name": "diesel" },
-      "gearbox_cb": { "name": "automat" },
-      "power": 140,
-      "body_cb": { "name": "sedan" },
-      "seller_type": "P",
-      "images": []
+      "fuel_cb": { "name": "Nafta", "seo_name": "nafta", "value": 2 },
+      "gearbox_cb": { "name": "Automatická", "seo_name": "automaticka", "value": 3 },
+      "id": 211181187,
+      "images": [{ "url": "//d19-a.sdn.cz/d_19/c_img_qF_C/k0OqwCKRZSJdCm5H5htWb/b773.jpeg" }],
+      "in_operation_date": "2025-07-01",
+      "locality": { "district": "Hlavní město Praha", "region": "Hlavní město Praha" },
+      "manufacturer_cb": { "name": "Škoda", "seo_name": "skoda", "value": 93 },
+      "manufacturing_date": "2025-06-01",
+      "model_cb": { "name": "Kodiaq", "seo_name": "kodiaq", "value": 7595 },
+      "name": "Škoda Kodiaq",
+      "premise": null,
+      "price": 885000,
+      "tachometer": 40000,
+      "user": { "id": 255000964 }
     },
-    { "advert_id": null, "name": "broken item without id" }
-  ]
+    {
+      "additional_model_name": "VW ID3 PRO Performance",
+      "fuel_cb": { "name": "Elektro", "seo_name": "elektro", "value": 4 },
+      "gearbox_cb": { "name": "Automatická", "seo_name": "automaticka", "value": 3 },
+      "id": 211013553,
+      "images": [{ "url": "//d19-a.sdn.cz/d_19/c_img_qE_C/kPVqmweP7JBuatXBtDHnwqnH/6502.jpeg" }],
+      "in_operation_date": "2021-02-01",
+      "locality": { "district": "Klatovy", "region": "Plzeňský kraj" },
+      "manufacturer_cb": { "name": "Volkswagen", "seo_name": "volkswagen", "value": 103 },
+      "manufacturing_date": "2021-02-01",
+      "model_cb": { "name": "ID.3", "seo_name": "id3", "value": 8742 },
+      "name": "Volkswagen ID.3, VW ID3 PRO Performance",
+      "premise": {
+        "external_id": 2,
+        "id": 12973177,
+        "name": "AAA AUTO",
+        "seo_name": "aaa-auto"
+      },
+      "price": 450000,
+      "tachometer": 103700,
+      "user": { "id": 12597871 }
+    }
+  ],
+  "status_code": 200,
+  "status_message": "OK"
 }

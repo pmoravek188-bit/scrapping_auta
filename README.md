@@ -132,26 +132,28 @@ Supabase free projekt aktivní (jinak po týdnu nečinnosti pauzuje).
 
 ## Ověřené vs. neověřené adaptéry zdrojů
 
-Tento sandbox nemá přístup k internetu mimo npm registry, takže žádný z
-adaptérů se nepodařilo ověřit proti živému webu. Všechny jsou napsané z
-veřejně dostupných znalostí o daných webech, defenzivně (zod `safeParse` /
-tolerantní CSS selektory, tiché přeskočení nevalidní položky, log počtu
-nalezených inzerátů) a otestované proti ručně vytvořeným fixturám v
-`packages/scrapers/test/fixtures/`. **Skutečné ověření proběhne až při prvním
-běhu v GitHub Actions** — sledujte stránku „Stav zdrojů“ a `scrape_runs.errors`.
+Všech 10 adaptérů bylo **ověřeno proti živému webu 2026-09-28** (curl s
+reálným Chrome User-Agentem a `Accept-Language: cs-CZ`). Detailní poznámky
+k tomu, co bylo na daném webu potvrzeno (přesný tvar URL/API, pole v
+odpovědi, co se nepodařilo ověřit) jsou v komentáři na začátku každého
+souboru `packages/scrapers/src/sources/<id>.ts`. Parsování zůstává
+defenzivní (zod `safeParse` / tolerantní selektory, tiché přeskočení
+nevalidní položky, log počtu nalezených inzerátů) a otestované proti
+fixturám (reálné, ořezané ukázky uložené z živého webu) v
+`packages/scrapers/test/fixtures/`.
 
-| Zdroj | Stav | Poznámka |
-|---|---|---|
-| `sauto` | zapnuto, neověřeno | JSON API `www.sauto.cz/api/v1/items/search`, parsování tolerantní k chybějícím polím |
-| `bazos` | zapnuto, neověřeno | HTML parsování (`auto.bazos.cz`), žádné JSON API |
-| `tipcars` | zapnuto, neověřeno | HTML parsování, obecné selektory karet inzerátů |
-| `carvago` | zapnuto, neověřeno | Předpokládané JSON API (`POST /v2/vehicles/search`), tvar požadavku/odpovědi bude potřeba doladit |
-| `dasweltauto` | zapnuto, neověřeno | HTML parsování |
-| `aaaauto` | zapnuto, neověřeno | HTML parsování |
-| `havex` | **vypnuto** v seedu | obecný HTML adaptér, není ověřený |
-| `autoesa` | **vypnuto** v seedu | obecný HTML adaptér, není ověřený |
-| `skodaplus` | **vypnuto** v seedu | obecný HTML adaptér, není ověřený |
-| `autoscout24` | **vypnuto** v seedu | AutoScout24 pravděpodobně embeduje výsledky v `__NEXT_DATA__`; stub zatím používá obecný HTML parser jako placeholder |
+| Zdroj | Stav | Zdroj dat / server-side filtry | Poznámka |
+|---|---|---|---|
+| `sauto` | zapnuto, ověřeno | JSON API `sauto.cz/api/v1/items/search?category_id=838`; filtry: značka/model, cena, nájezd, rok, palivo, převodovka, částečně karoserie, výkon | `power` (kW) skoro nikdy není na výpisu, jen na detailu — `powerKw` bývá `null` |
+| `bazos` | zapnuto, ověřeno | HTML `auto.bazos.cz`; rubrika podle značky (`/skoda/`, …) = filtr jen na osobní auta, + `hledat`/`cenaod`/`cenado`, stránkování `crp` | rok/km/palivo/převodovka se parsují z volného textu titulku+popisu — u stručných inzerátů (bez roku/km v textu) zůstanou `null`, hledání s filtrem na rok/km takové inzeráty přeskočí |
+| `tipcars` | zapnuto, ověřeno | HTML `tipcars.com/ojete/<značka>-<model>` (JSON-LD `ItemList`); cena/rok/km filtry na serveru nefungují (jen klientský matcher) | rok/km/výkon se čtou z `data-measure-data-value` atributu karty, ne z JSON-LD |
+| `carvago` | zapnuto, ověřeno | JSON v `__NEXT_DATA__` na `carvago.com/cs/auta/<značka>/<model>`; filtry: cena, nájezd, rok registrace, výkon, palivo/převodovka/karoserie (přes tag `const_key`) | výhradně dealeři (import ze zahraničí) |
+| `dasweltauto` | zapnuto, ověřeno | JSON API `dasweltauto.cz/api/locales/cs_CZ/vehicles/search/`; filtry: značka (`brands`), cena, rok registrace, nájezd | — |
+| `aaaauto` | zapnuto, ověřeno | JSON-LD `@graph`/`ItemList` na `aaaauto.cz/ojete-vozy/<značka>/<model>`; filtry: cena, rok, nájezd (jen 2 hodnoty karoserie ověřeny) | výhradně dealer AAA AUTO |
+| `havex` | **nově zapnuto** touto migrací, ověřeno | HTML `havex.cz/cz/ojete-vozy-<skoda\|seat\|cupra>`; filtr jen značka (přes cestu), cena/rok/km jen klientský matcher | prodává jen Škoda/Seat/Cupra |
+| `autoesa` | **nově zapnuto** touto migrací, ověřeno | HTML `autoesa.cz/<značka>` nebo `/vsechna-auta`; filtr jen značka (přes cestu), cena/rok/km jen klientský matcher | — |
+| `skodaplus` | **nově zapnuto** touto migrací, ověřeno | GraphQL `skodaplus.cz/graphql` (`cars(filter: CarFilterInput)`); filtry: značka (`carMakes` id), cena, rok registrace, nájezd | přes branding "Škoda Plus" prodává i jiné značky VW koncernu (ověřeno na Audi) |
+| `autoscout24` | zapnuto touto migrací (jen Německo) | JSON v `__NEXT_DATA__` na `autoscout24.cz/lst/<značka>/<model>?cy=D`; filtry: značka/model, rok, nájezd, cena (CZK→EUR podle `eurCzkRate`, zaokrouhleno směrem ven) | **záměrně jen zahraniční (německý) inventář** — `autoscout24.cz` nemá žádné tuzemské inzeráty vůbec (`cy=CZ` dává 0 výsledků); zobrazená cena (`priceRaw`) je vždy cena včetně DPH (brutto) — u inzerátů s `isVatLabelLegallyRequired` (DPH je odpočitatelná pro firmy) se cena **nepřepočítává**, jen se do titulku přidá „· odpočet DPH“ |
 
 Zdroje se zapínají/vypínají v tabulce `sources` (sloupec `enabled`).
 
@@ -195,11 +197,18 @@ označí je jako odeslané.
 
 ## Známá omezení / co zbývá
 
-- Žádný adaptér nebyl ověřen proti živému webu (viz tabulka výše) — první
-  ostrý běh v GitHub Actions pravděpodobně bude vyžadovat drobné opravy
-  selektorů/API tvaru u některých zdrojů.
-- `autoscout24`, `havex`, `autoesa`, `skodaplus` jsou jen stuby (vypnuté),
-  čekají na někoho, kdo ověří skutečnou strukturu stránky.
+- Všech 10 adaptérů bylo ověřeno proti živému webu 2026-09-28 (viz tabulka
+  výše), ale weby se mění — ostrý běh v GitHub Actions může časem vyžadovat
+  drobné opravy selektorů/API tvaru; sledujte stránku „Stav zdrojů“ a
+  `scrape_runs.errors`.
+- `bazos` u stručných inzerátů (bez roku/km v titulku či popisu) nemá odkud
+  rok/nájezd vzít — takové inzeráty projdou dál s `year`/`mileageKm` `null`
+  a hledání s aktivním filtrem na rok/km je proto vynechá.
+- `autoscout24` je záměrně jen německý inventář (`cy=D`) — `autoscout24.cz`
+  nemá žádné tuzemské (CZ) inzeráty vůbec. Ceny jsou v EUR a runner je
+  převádí na CZK; zobrazená cena je vždy včetně DPH (brutto) — u inzerátů,
+  kde je DPH odpočitatelná pro firmy (`isVatLabelLegallyRequired`), se cena
+  nijak nepřepočítává, jen se to označí „· odpočet DPH“ v titulku.
 - Filtry ve `/results` jsou zatím jen řazení + stav (aktivní/oblíbené/vše) +
   výběr hledání; rozšířené filtrování přímo ve výsledcích (cena/rok/km) lze
   doplnit později stejným způsobem jako formulář hledání.

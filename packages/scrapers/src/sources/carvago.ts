@@ -1,106 +1,219 @@
 /**
- * Carvago.com adapter — UNVERIFIED (best-guess; sandbox cannot reach
- * carvago.com). Carvago's frontend is a JS SPA known to be backed by a JSON
- * search API. Exact host/path are unconfirmed, so this is written against a
- * plausible `POST /v2/vehicles/search`-style endpoint and parsed
- * defensively; the request will likely need adjusting after the first live
- * GitHub Actions run (see README "Ověřené vs. neověřené zdroje").
+ * Carvago.com adapter — VERIFIED live 2026-09-28.
+ *
+ * The old guess (`POST https://api.carvago.com/v2/vehicles/search`) 404s —
+ * that host doesn't resolve to a search API at all. Carvago's real frontend
+ * lives at `https://carvago.com` (no `www`, note the domain redirects
+ * `www.carvago.com` -> a 404 page) under the `/cs` (Czech) locale, and the
+ * search page `https://carvago.com/cs/auta` is a Next.js SSR page that
+ * embeds the *entire* first page of results as JSON in
+ * `<script id="__NEXT_DATA__">` — no separate API call needed, no headless
+ * browser needed.
+ *
+ * Confirmed live:
+ * - `props.pageProps.searchResults` = `{ total, cars: [...] }`.
+ * - Each `car` has `id`, `slug`, `title`, `make`/`model` as
+ *   `{const_key, label}`, `price` (number) + `price_currency.name`,
+ *   `mileage` (km), `power` (always `power_unit: "kW"`),
+ *   `registration_date`/`manufacture_date` ("YYYY-MM-DD" or null),
+ *   `location_city`, `main_image` (absolute URL), `vin`,
+ *   `seller.type.const_key` (every car seen was
+ *   `SELLERTYPE_PARTNER_DEALERSHIP` — Carvago is a dealer-import
+ *   aggregator, no private listings), and `catalog_features`: an array of
+ *   `{const_key, label}` tags that includes the fuel type (`FUELTYPE_*`),
+ *   body style (`CARSTYLE_*`) and transmission (`TRANSMISSION_MANUAL` /
+ *   `TRANSMISSION_AUTOMATIC`) — there's no dedicated top-level field for
+ *   those, they have to be picked out of this tag list.
+ * - Detail URL: `https://carvago.com/cs/auto/{id}/{slug}` (confirmed 200).
+ * - Server-side filtering confirmed live via `numberOfItems`/`total`
+ *   changing between requests: path segments `/cs/auta/{makeSlug}` and
+ *   `/cs/auta/{makeSlug}/{modelSlug}`; query params `price-from`,
+ *   `price-to`, `mileage-to`, `registration-date-from`,
+ *   `registration-date-to`, `power-from`, `page`, `limit`, and the
+ *   filter-tag params `fuel-type[]=FUELTYPE_*`, `transmission[]=TRANSMISSION_*`,
+ *   `karoserie[]=CARSTYLE_*` (these 308-redirect to a canonicalized path
+ *   like `/cs/auta/skoda/octavia/diesel` — `fetch` follows redirects
+ *   automatically so this is transparent).
  */
-import { z } from "zod";
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
-import { fetchJson, MAX_RESULT_PAGES } from "../http.js";
+import type { FuelType, TransmissionType } from "@scrapping-auta/core";
+import { slugifyMakeModel } from "@scrapping-auta/core";
+import { fetchText, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 
-const SEARCH_ENDPOINT = "https://api.carvago.com/v2/vehicles/search";
-const PAGE_SIZE = 24;
+const BASE_URL = "https://carvago.com";
+const PAGE_SIZE = 20;
 
-export function buildCarvagoRequestBody(
-  query: SearchQuery,
-  page: number
-): Record<string, unknown> {
-  const filter: Record<string, unknown> = {};
-  if (query.make) filter.make = [query.make];
-  if (query.model) filter.model = [query.model];
-  if (query.yearFrom || query.yearTo) {
-    filter.firstRegistrationYear = { from: query.yearFrom ?? undefined, to: query.yearTo ?? undefined };
+const FUEL_CONST_KEY_MAP: Partial<Record<FuelType, string>> = {
+  petrol: "FUELTYPE_PETROL",
+  diesel: "FUELTYPE_DIESEL",
+  electric: "FUELTYPE_ELECTRIC",
+  hybrid: "FUELTYPE_HYBRID",
+  lpg: "FUELTYPE_LPG",
+  cng: "FUELTYPE_CNG",
+  other: "FUELTYPE_OTHER",
+  // plugin_hybrid is a separate "hybrid_type" sub-filter on carvago, not a
+  // top-level fuel-type value — omitted, left to the client-side matcher.
+};
+
+const TRANSMISSION_CONST_KEY_MAP: Record<TransmissionType, string> = {
+  manual: "TRANSMISSION_MANUAL",
+  automatic: "TRANSMISSION_AUTOMATIC",
+};
+
+const BODY_CONST_KEY_MAP: Partial<Record<string, string>> = {
+  hatchback: "CARSTYLE_HATCHBACK",
+  sedan: "CARSTYLE_SEDANS_SALOONS",
+  combi: "CARSTYLE_ESTATE_CAR",
+  suv: "CARSTYLE_SUV_OFFROAD",
+  coupe: "CARSTYLE_COUPE",
+  van: "CARSTYLE_VAN",
+  pickup: "CARSTYLE_PICK_UP",
+  cabrio: "CARSTYLE_CABRIOLET",
+  mpv: "CARSTYLE_MPV",
+};
+
+// Reverse maps: catalog_features const_key -> canonical token accepted by
+// FUEL_ALIASES/BODY_ALIASES/TRANSMISSION_ALIASES in @scrapping-auta/core.
+const FUEL_KEY_TO_CANONICAL: Record<string, string> = {
+  FUELTYPE_PETROL: "petrol",
+  FUELTYPE_DIESEL: "diesel",
+  FUELTYPE_ELECTRIC: "electric",
+  FUELTYPE_HYBRID: "hybrid",
+  FUELTYPE_LPG: "lpg",
+  FUELTYPE_CNG: "cng",
+};
+const BODY_KEY_TO_CANONICAL: Record<string, string> = {
+  CARSTYLE_HATCHBACK: "hatchback",
+  CARSTYLE_SEDANS_SALOONS: "sedan",
+  CARSTYLE_ESTATE_CAR: "combi",
+  CARSTYLE_SUV_OFFROAD: "suv",
+  CARSTYLE_COUPE: "coupe",
+  CARSTYLE_VAN: "van",
+  CARSTYLE_PICK_UP: "pickup",
+  CARSTYLE_CABRIOLET: "cabrio",
+  CARSTYLE_MPV: "mpv",
+};
+const TRANSMISSION_KEY_TO_CANONICAL: Record<string, string> = {
+  TRANSMISSION_MANUAL: "manual",
+  TRANSMISSION_AUTOMATIC: "automatic",
+};
+
+export function buildCarvagoUrl(query: SearchQuery, page: number): string {
+  let path = "/cs/auta";
+  if (query.make) {
+    path += `/${slugifyMakeModel(query.make)}`;
+    if (query.model) path += `/${slugifyMakeModel(query.model)}`;
   }
-  if (query.priceFrom || query.priceTo) {
-    filter.price = { from: query.priceFrom ?? undefined, to: query.priceTo ?? undefined };
+  const params = new URLSearchParams();
+  params.set("page", String(page + 1));
+  params.set("limit", String(PAGE_SIZE));
+  if (query.priceFrom) params.set("price-from", String(query.priceFrom));
+  if (query.priceTo) params.set("price-to", String(query.priceTo));
+  if (query.mileageMax) params.set("mileage-to", String(query.mileageMax));
+  if (query.yearFrom) params.set("registration-date-from", String(query.yearFrom));
+  if (query.yearTo) params.set("registration-date-to", String(query.yearTo));
+  if (query.powerMinKw) params.set("power-from", String(query.powerMinKw));
+  const fuelFilter = query.fuel[0];
+  if (query.fuel.length === 1 && fuelFilter) {
+    const key = FUEL_CONST_KEY_MAP[fuelFilter];
+    if (key) params.set("fuel-type[]", key);
   }
-  if (query.mileageMax) filter.mileage = { to: query.mileageMax };
-  return {
-    filter,
-    page,
-    pageSize: PAGE_SIZE,
-    locale: "cs",
-    country: "CZ",
+  if (query.transmission) {
+    params.set("transmission[]", TRANSMISSION_CONST_KEY_MAP[query.transmission]);
+  }
+  const bodyFilter = query.body[0];
+  if (query.body.length === 1 && bodyFilter) {
+    const key = BODY_CONST_KEY_MAP[bodyFilter];
+    if (key) params.set("karoserie[]", key);
+  }
+  return `${BASE_URL}${path}?${params.toString()}`;
+}
+
+interface CarvagoCar {
+  id?: string | number;
+  slug?: string;
+  title?: string;
+  vin?: string | null;
+  power?: number | null;
+  mileage?: number | null;
+  registration_date?: string | null;
+  manufacture_date?: string | null;
+  price?: number | null;
+  price_currency?: { name?: string } | null;
+  location_city?: string | null;
+  main_image?: string | null;
+  make?: { label?: string } | null;
+  model?: { label?: string } | null;
+  seller?: { type?: { const_key?: string } | null } | null;
+  catalog_features?: Array<{ const_key?: string }> | null;
+}
+
+interface CarvagoNextData {
+  props?: {
+    pageProps?: {
+      searchResults?: {
+        total?: number;
+        cars?: CarvagoCar[];
+      };
+    };
   };
 }
 
-const CarvagoItemSchema = z.object({
-  id: z.union([z.string(), z.number()]).optional(),
-  slug: z.string().optional(),
-  make: z.object({ name: z.string().optional() }).optional(),
-  model: z.object({ name: z.string().optional() }).optional(),
-  variant: z.string().optional(),
-  firstRegistration: z.union([z.string(), z.number()]).optional(),
-  mileage: z.number().optional(),
-  price: z
-    .object({ amount: z.number().optional(), currency: z.string().optional() })
-    .optional(),
-  fuelType: z.string().optional(),
-  transmissionType: z.string().optional(),
-  power: z.object({ kw: z.number().optional() }).optional(),
-  bodyType: z.string().optional(),
-  color: z.string().optional(),
-  country: z.string().optional(),
-  vin: z.string().optional(),
-  images: z.array(z.string()).optional(),
-});
-
-export interface CarvagoResponse {
-  items?: unknown[];
-  data?: unknown[];
-  totalCount?: number;
+function yearFromDate(dateStr: string | null | undefined): number | null {
+  if (!dateStr) return null;
+  const m = /^(\d{4})/.exec(dateStr);
+  return m ? Number(m[1]) : null;
 }
 
-export function parseCarvagoResponse(json: unknown): RawListing[] {
-  const parsed = json as CarvagoResponse;
-  const items = parsed?.items ?? parsed?.data ?? [];
+function pickFeature(
+  features: Array<{ const_key?: string }> | null | undefined,
+  keyMap: Record<string, string>
+): string | null {
+  for (const f of features ?? []) {
+    const mapped = f.const_key ? keyMap[f.const_key] : undefined;
+    if (mapped) return mapped;
+  }
+  return null;
+}
+
+export function parseCarvagoHtml(html: string): RawListing[] {
+  const m = /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/.exec(html);
+  const rawJson = m?.[1];
+  if (!rawJson) return [];
+  let data: CarvagoNextData;
+  try {
+    data = JSON.parse(rawJson) as CarvagoNextData;
+  } catch {
+    return [];
+  }
+  const cars = data.props?.pageProps?.searchResults?.cars ?? [];
   const out: RawListing[] = [];
-  for (const item of items) {
-    const r = CarvagoItemSchema.safeParse(item);
-    if (!r.success) continue;
-    const v = r.data;
-    if (v.id == null || !v.slug) continue;
-    const yearRaw = v.firstRegistration;
-    const year =
-      typeof yearRaw === "number"
-        ? yearRaw
-        : typeof yearRaw === "string" && /^\d{4}/.test(yearRaw)
-          ? Number(yearRaw.slice(0, 4))
-          : null;
+  for (const car of cars) {
+    if (car.id == null || !car.slug) continue;
+    const year = yearFromDate(car.registration_date) ?? yearFromDate(car.manufacture_date);
+    const sellerConstKey = car.seller?.type?.const_key ?? "";
     out.push({
-      sourceId: String(v.id),
-      url: `https://www.carvago.com/cz/car/${v.slug}`,
-      title: [v.make?.name, v.model?.name, v.variant].filter(Boolean).join(" "),
-      make: v.make?.name ?? null,
-      model: v.model?.name ?? null,
-      variant: v.variant ?? null,
+      sourceId: String(car.id),
+      url: `${BASE_URL}/cs/auto/${car.id}/${car.slug}`,
+      title: car.title ?? [car.make?.label, car.model?.label].filter(Boolean).join(" "),
+      make: car.make?.label ?? null,
+      model: car.model?.label ?? null,
+      variant: null,
       year,
-      mileageKm: v.mileage ?? null,
-      price: v.price?.amount ?? null,
-      currency: v.price?.currency ?? "EUR",
-      fuel: v.fuelType ?? null,
-      transmission: v.transmissionType ?? null,
-      powerKw: v.power?.kw ?? null,
-      body: v.bodyType ?? null,
-      color: v.color ?? null,
-      location: null,
-      country: v.country ?? "EU",
-      sellerType: "dealer",
-      vin: v.vin ?? null,
-      imageUrls: v.images ?? [],
+      mileageKm: car.mileage ?? null,
+      price: car.price ?? null,
+      currency: car.price_currency?.name ?? "CZK",
+      fuel: pickFeature(car.catalog_features, FUEL_KEY_TO_CANONICAL),
+      transmission: pickFeature(car.catalog_features, TRANSMISSION_KEY_TO_CANONICAL),
+      powerKw: car.power ?? null,
+      body: pickFeature(car.catalog_features, BODY_KEY_TO_CANONICAL),
+      color: null,
+      location: car.location_city ?? null,
+      country: "EU",
+      sellerType: sellerConstKey.includes("DEALER") ? "dealer" : "unknown",
+      vin: car.vin ?? null,
+      imageUrls: car.main_image ? [car.main_image] : [],
     });
   }
   return out;
@@ -108,23 +221,20 @@ export function parseCarvagoResponse(json: unknown): RawListing[] {
 
 export const carvagoAdapter: SourceAdapter = {
   id: "carvago",
-  verified: false,
+  verified: true,
   async search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]> {
     const maxPages = ctx.maxPages ?? MAX_RESULT_PAGES;
     const out: RawListing[] = [];
     for (let page = 0; page < maxPages; page++) {
-      let json: unknown;
+      const url = buildCarvagoUrl(query, page);
+      let html: string;
       try {
-        json = await fetchJson(SEARCH_ENDPOINT, {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify(buildCarvagoRequestBody(query, page)),
-        });
+        html = await fetchText(url);
       } catch (err) {
         console.warn(`[carvago] request failed on page ${page}:`, (err as Error).message);
         break;
       }
-      const items = parseCarvagoResponse(json);
+      const items = parseCarvagoHtml(html);
       out.push(...items);
       if (items.length < PAGE_SIZE) break;
     }

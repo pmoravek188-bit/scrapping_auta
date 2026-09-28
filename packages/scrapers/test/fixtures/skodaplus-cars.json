@@ -1,0 +1,63 @@
+{
+  "data": {
+    "cars": {
+      "pageInfo": { "hasNextPage": true, "endCursor": "Q2FyQ29ubmVjdGlvbkRhdGFGZXRjaGVyPT1DYXItMTA2MjQ5MTA=" },
+      "edges": [
+        {
+          "node": {
+            "id": "Car-10625124",
+            "prettyUrl": "skoda-fabia-combi-ambition-1-0-tsi-70-kw",
+            "model": { "modelName": "Fabia", "carMake": { "name": "Škoda" } },
+            "modelType": "Ambition 1.0 TSI 70 kW",
+            "price": { "value": 199900 },
+            "mileage": 160439,
+            "manufactureYear": 2022,
+            "firstRegistration": "2022-09-26",
+            "fuel": { "value": "Benzín" },
+            "transmission": { "value": "Manuální" },
+            "enginePower": 70,
+            "vin": "TMBJP6NJ9PZ011573",
+            "dealer": { "name": "AUTO JAROV, s.r.o." },
+            "images": [{ "normalUrl": "/images/car/Car-10625124/a.jpg" }]
+          }
+        },
+        {
+          "node": {
+            "id": "Car-10624910",
+            "prettyUrl": "skoda-octavia-1.6-tdi-77-kw-elegance",
+            "model": { "modelName": "Octavia", "carMake": { "name": "Škoda" } },
+            "modelType": "1.6 TDI 77 kW Elegance",
+            "price": { "value": 177900 },
+            "mileage": 124518,
+            "manufactureYear": 2013,
+            "firstRegistration": "2013-12-02",
+            "fuel": { "value": "Diesel" },
+            "transmission": { "value": "Manuální" },
+            "enginePower": 77,
+            "vin": "TMBAG7NE7E0119460",
+            "dealer": { "name": "Autocentrum Jan Šmucler s.r.o." },
+            "images": []
+          }
+        },
+        {
+          "node": {
+            "id": "Car-10610503",
+            "prettyUrl": "audi-a4-2.0-tdi-140-kw-s-line",
+            "model": { "modelName": "A4", "carMake": { "name": "Audi" } },
+            "modelType": "2.0 TDI 140 kW S line",
+            "price": { "value": 559000 },
+            "mileage": 89000,
+            "manufactureYear": 2019,
+            "firstRegistration": "2019-05-14",
+            "fuel": { "value": "Diesel" },
+            "transmission": { "value": "Automatická" },
+            "enginePower": 140,
+            "vin": "WAUZZZF49KA000001",
+            "dealer": { "name": "Porsche Inter Auto CZ" },
+            "images": []
+          }
+        }
+      ]
+    }
+  }
+}
