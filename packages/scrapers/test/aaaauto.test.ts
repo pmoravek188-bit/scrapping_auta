@@ -27,6 +27,21 @@ describe("aaaauto adapter", () => {
     expect(url).toContain("yearFrom=2018");
   });
 
+  it("maps a canonical Mercedes-Benz class slug to aaaauto's own bare-letter model path", () => {
+    // Confirmed live: aaaauto.cz's own model path segment for every
+    // Mercedes-Benz lettered class is just the bare letter (e.g.
+    // /ojete-vozy/mercedes-benz/v, totalItems 14 vs 340 unfiltered) —
+    // matching its own ld+json `model` field, which is literally "V" for a
+    // V-Class listing, not "V-Class".
+    const url = buildAaaAutoUrl({ ...baseQuery, make: "mercedes-benz", model: "v-class" }, 0);
+    expect(url).toContain("/ojete-vozy/mercedes-benz/v?");
+  });
+
+  it("leaves a non-class Mercedes-Benz model slug untouched", () => {
+    const url = buildAaaAutoUrl({ ...baseQuery, make: "mercedes-benz", model: "vito" }, 0);
+    expect(url).toContain("/ojete-vozy/mercedes-benz/vito?");
+  });
+
   it("only applies the confirmed body filter values", () => {
     const suvUrl = buildAaaAutoUrl({ ...baseQuery, body: ["suv"] }, 0);
     expect(suvUrl).toContain("bodyTypeId-array=SUV");

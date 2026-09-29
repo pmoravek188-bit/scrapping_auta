@@ -40,6 +40,31 @@ describe("autoscout24 adapter", () => {
     expect(url).toContain("/lst?");
   });
 
+  it("maps a canonical Mercedes-Benz class slug to autoscout24's own whole-class path segment", () => {
+    // Confirmed live: autoscout24.cz's whole-class model path is
+    // "trida-<letter>-vse" for most letters (e.g. numberOfResults narrows
+    // from ~198k to ~6.4k for /lst/mercedes-benz/trida-v-vse), with two
+    // irregular exceptions also confirmed live: T-Class is "t-class" (no
+    // "-vse"), X-Class is "rada-x-vse" ("Řada X").
+    expect(buildAutoScout24Url({ ...baseQuery, make: "mercedes-benz", model: "v-class" }, 0, EUR_CZK_RATE)).toContain(
+      "/lst/mercedes-benz/trida-v-vse"
+    );
+    expect(buildAutoScout24Url({ ...baseQuery, make: "mercedes-benz", model: "c-class" }, 0, EUR_CZK_RATE)).toContain(
+      "/lst/mercedes-benz/trida-c-vse"
+    );
+    expect(buildAutoScout24Url({ ...baseQuery, make: "mercedes-benz", model: "t-class" }, 0, EUR_CZK_RATE)).toContain(
+      "/lst/mercedes-benz/t-class"
+    );
+    expect(buildAutoScout24Url({ ...baseQuery, make: "mercedes-benz", model: "x-class" }, 0, EUR_CZK_RATE)).toContain(
+      "/lst/mercedes-benz/rada-x-vse"
+    );
+  });
+
+  it("leaves a non-class Mercedes-Benz model slug untouched", () => {
+    const url = buildAutoScout24Url({ ...baseQuery, make: "mercedes-benz", model: "vito" }, 0, EUR_CZK_RATE);
+    expect(url).toContain("/lst/mercedes-benz/vito");
+  });
+
   it("purchasePriceEur passes priceRaw through unchanged for a normal listing", () => {
     expect(purchasePriceEur({ priceRaw: 8700, isVatLabelLegallyRequired: false })).toBe(8700);
   });

@@ -34,10 +34,21 @@
  *   `karoserie[]=CARSTYLE_*` (these 308-redirect to a canonicalized path
  *   like `/cs/auta/skoda/octavia/diesel` — `fetch` follows redirects
  *   automatically so this is transparent).
+ *
+ * Mercedes-Benz lettered classes: unlike sauto/tipcars/autoscout24/aaaauto,
+ * carvago has NO single model slug that groups a whole class — confirmed
+ * live that `/cs/auta/mercedes-benz/v-class`, `/v-klasse` and `/trida-v` all
+ * silently redirect back to the unfiltered `/cs/auta/mercedes-benz` (same
+ * ~81k `total` as no model filter at all), because carvago's actual model
+ * catalog only has individual engine variants (`v-300`, `v-250`, `c-180`,
+ * ... — each of those DOES filter correctly, confirmed live). Since we only
+ * know the class, not the variant, the model path segment is simply omitted
+ * for these — the make filter still applies, and the runner's client-side
+ * `matchesSearch` narrows the rest, same as it always does.
  */
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
 import type { FuelType, TransmissionType } from "@scrapping-auta/core";
-import { slugifyMakeModel } from "@scrapping-auta/core";
+import { mercedesClassLetter, normalizeMake, slugifyMakeModel } from "@scrapping-auta/core";
 import { fetchText, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 
@@ -118,7 +129,11 @@ export function buildCarvagoUrl(query: SearchQuery, page: number): string {
   let path = "/cs/auta";
   if (query.make) {
     path += `/${slugifyMakeModel(query.make)}`;
-    if (query.model) path += `/${slugifyMakeModel(query.model)}`;
+    const isUnmappableMercedesClass =
+      query.model != null &&
+      normalizeMake(query.make) === "mercedes-benz" &&
+      mercedesClassLetter(query.model) != null;
+    if (query.model && !isUnmappableMercedesClass) path += `/${slugifyMakeModel(query.model)}`;
   }
   const params = new URLSearchParams();
   params.set("page", String(page + 1));

@@ -115,10 +115,11 @@ function toSearchQuery(row: {
   drive: string[];
   features: string[];
 }): SearchQuery {
+  const make = normalizeMake(row.make);
   return SearchQuerySchema.parse({
     id: row.id,
-    make: normalizeMake(row.make),
-    model: normalizeModel(row.model),
+    make,
+    model: normalizeModel(row.model, make),
     yearFrom: row.year_from,
     yearTo: row.year_to,
     priceFrom: row.price_from,
@@ -278,7 +279,7 @@ export async function saveSearchAndRematch(input: SaveSearchInput): Promise<Save
     enabled: input.enabled,
     notify: input.notify,
     make: normalizeMake(input.make),
-    model: normalizeModel(input.model),
+    model: normalizeModel(input.model, input.make),
     year_from: input.year_from,
     year_to: input.year_to,
     price_from: input.price_from,

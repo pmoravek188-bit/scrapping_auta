@@ -85,7 +85,7 @@ export function inferMakeModel(
   if (knownMake) {
     const models = POPULAR_MODELS[knownMake] ?? [];
     const model = findModelInText(normalized, models) ?? fallbackModelWords(normalized.split(" "));
-    return { make: knownMake, model };
+    return { make: knownMake, model: model ? (normalizeModel(model, knownMake) ?? model) : null };
   }
 
   for (const { phrase, canonical } of MAKE_ALIAS_ENTRIES) {
@@ -98,7 +98,7 @@ export function inferMakeModel(
     const restWords = rest.split(" ").filter(Boolean);
     const models = POPULAR_MODELS[canonical] ?? [];
     const model = rest ? (findModelInText(rest, models) ?? fallbackModelWords(restWords)) : null;
-    return { make: canonical, model: model ? (normalizeModel(model) ?? model) : null };
+    return { make: canonical, model: model ? (normalizeModel(model, canonical) ?? model) : null };
   }
 
   return { make: null, model: null };

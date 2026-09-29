@@ -74,7 +74,14 @@
  */
 import * as cheerio from "cheerio";
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
-import { MAKE_ALIASES, inferMakeModel, isKnownMakeSlug, normalizeMake, slugifyMakeModel } from "@scrapping-auta/core";
+import {
+  MAKE_ALIASES,
+  inferMakeModel,
+  isKnownMakeSlug,
+  mercedesClassLetter,
+  normalizeMake,
+  slugifyMakeModel,
+} from "@scrapping-auta/core";
 import { fetchText, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 import { guessFuel, guessTransmission, parseCzNumber } from "./_util-b.js";
@@ -92,7 +99,15 @@ export function buildTipCarsUrl(query: SearchQuery, page: number): string {
   let path = "/ojete";
   if (query.make) {
     const makeSlug = slugifyMakeModel(query.make);
-    const modelSlug = query.model ? slugifyMakeModel(query.model) : null;
+    let modelSlug = query.model ? slugifyMakeModel(query.model) : null;
+    // tipcars.com's own URL slug for every Mercedes-Benz lettered class is
+    // "tridy-<letter>" (Czech genitive "Třídy X"), confirmed live (e.g.
+    // `/ojete/mercedes-benz-tridy-v` narrows "Zobrazeno N inzerátů" from 302
+    // to 216) — never "trida-<letter>"/"<letter>-class"/"<letter>-klasse".
+    if (modelSlug && normalizeMake(query.make) === "mercedes-benz") {
+      const letter = mercedesClassLetter(modelSlug);
+      if (letter) modelSlug = `tridy-${letter}`;
+    }
     path += `/${makeSlug}${modelSlug ? `-${modelSlug}` : ""}`;
   }
   const params = new URLSearchParams();

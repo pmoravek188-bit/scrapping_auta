@@ -129,6 +129,86 @@ describe("matchesSearch", () => {
   });
 });
 
+// Regression coverage for the latent Mercedes-Benz class-naming bug: sources
+// spell the same class differently ("Třída V", "Třídy V", "V-Klasse",
+// "V-Class", bare "V"), and a saved search built from the catalog's
+// canonical "v-class" option must match a listing however its source spelled
+// it — see make-model.ts's Mercedes-Benz alias table.
+describe("matchesSearch (Mercedes-Benz lettered-class naming)", () => {
+  const vClassQuery: SearchQuery = {
+    make: "mercedes-benz",
+    model: "v-class",
+    fuel: [],
+    body: [],
+    keywords: [],
+    excludeKeywords: [],
+    sources: [],
+  };
+
+  it("matches a listing titled 'Třídy V 250 d' (sauto's/tipcars' own genitive spelling)", () => {
+    const listing = normalizeListing(
+      {
+        sourceId: "1",
+        url: "https://example.com/1",
+        title: "Mercedes-Benz Třídy V, V 250 d L 4matic",
+        make: "Mercedes-Benz",
+        model: "Třídy V",
+        variant: "V 250 d L 4matic",
+        year: 2021,
+        mileageKm: 61000,
+        price: 1069000,
+        currency: "CZK",
+        fuel: "diesel",
+        transmission: "automat",
+      },
+      { source: "sauto" }
+    );
+    expect(listing.model).toBe("v-class");
+    expect(matchesSearch(listing, vClassQuery)).toBe(true);
+  });
+
+  it("matches listings titled 'Třída V', 'V-Klasse' and a bare 'V' model field alike", () => {
+    const spellings = ["Třída V", "V-Klasse", "V"];
+    for (const model of spellings) {
+      const listing = normalizeListing(
+        {
+          sourceId: `spelling-${model}`,
+          url: "https://example.com/x",
+          title: `Mercedes-Benz ${model} 250 d`,
+          make: "Mercedes-Benz",
+          model,
+          year: 2020,
+          mileageKm: 80000,
+          price: 900000,
+          currency: "CZK",
+        },
+        { source: "aaaauto" }
+      );
+      expect(listing.model, model).toBe("v-class");
+      expect(matchesSearch(listing, vClassQuery), model).toBe(true);
+    }
+  });
+
+  it("does not match a different Mercedes-Benz class", () => {
+    const listing = normalizeListing(
+      {
+        sourceId: "2",
+        url: "https://example.com/2",
+        title: "Mercedes-Benz Třídy C 220 d",
+        make: "Mercedes-Benz",
+        model: "Třídy C",
+        year: 2021,
+        mileageKm: 40000,
+        price: 800000,
+        currency: "CZK",
+      },
+      { source: "sauto" }
+    );
+    expect(listing.model).toBe("c-class");
+    expect(matchesSearch(listing, vClassQuery)).toBe(false);
+  });
+});
+
 // Regression coverage for the production search that returned 719 scraped
 // listings but 0 matches: "ford " (trailing space, raw user text), model
 // "tourneo custom" (raw, spaced), year_from 2020, price_to 1500000,

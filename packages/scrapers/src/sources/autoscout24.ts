@@ -72,15 +72,38 @@
  *
  * `location`/`country`: `location.city` + `location.zip`, `country` fixed
  * to `"DE"` (this adapter only ever queries `cy=D`).
+ *
+ * Mercedes-Benz lettered classes: confirmed live (autoscout24.cz's rendered
+ * "SeoLinks" cross-links) that the whole-class model path segment is
+ * `trida-<letter>-vse` for A/B/C/E/S/G/V (e.g. `/lst/mercedes-benz/trida-v-vse`,
+ * confirmed via `numberOfResults` narrowing from ~198k to ~6.4k) — NOT
+ * `<letter>-class`/`<letter>-klasse`. Two letters are irregular exceptions,
+ * also confirmed live: T-Class is `t-class` (no "-vse" suffix), and X-Class
+ * is `rada-x-vse` ("Řada X", a different Czech word than "Třída" for the
+ * other classes). See `MERCEDES_CLASS_SLUG_MAP` below.
  */
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
-import { slugifyMakeModel } from "@scrapping-auta/core";
+import { mercedesClassLetter, normalizeMake, slugifyMakeModel } from "@scrapping-auta/core";
 import { fetchText, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 import { guessFuel, guessTransmission } from "./_util-b.js";
 
 const BASE_URL = "https://www.autoscout24.cz";
 const PAGE_SIZE = 20;
+
+/** Our canonical Mercedes-Benz class letter -> autoscout24.cz's own
+ * whole-class model path segment. Confirmed live — see file header. */
+const MERCEDES_CLASS_SLUG_MAP: Record<string, string> = {
+  a: "trida-a-vse",
+  b: "trida-b-vse",
+  c: "trida-c-vse",
+  e: "trida-e-vse",
+  s: "trida-s-vse",
+  g: "trida-g-vse",
+  v: "trida-v-vse",
+  t: "t-class",
+  x: "rada-x-vse",
+};
 
 interface As24Price {
   priceRaw?: number | null;
@@ -139,8 +162,12 @@ export function buildAutoScout24Url(
 ): string {
   let path = "/lst";
   if (query.make) {
-    path += `/${slugifyMakeModel(query.make)}`;
-    if (query.model) path += `/${slugifyMakeModel(query.model)}`;
+    const makeSlug = slugifyMakeModel(query.make);
+    path += `/${makeSlug}`;
+    if (query.model) {
+      const letter = normalizeMake(query.make) === "mercedes-benz" ? mercedesClassLetter(query.model) : null;
+      path += `/${letter ? MERCEDES_CLASS_SLUG_MAP[letter] : slugifyMakeModel(query.model)}`;
+    }
   }
   const params = new URLSearchParams();
   params.set("sort", "standard");

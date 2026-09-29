@@ -28,7 +28,7 @@ export default async function EditSearchPage({ params }: { params: Promise<{ id:
     // normalize on load so the select pre-selects correctly and re-saving
     // fixes the stored row too.
     make: normalizeMake(search.make) ?? "",
-    model: normalizeModel(search.model) ?? "",
+    model: normalizeModel(search.model, search.make) ?? "",
     year_from: search.year_from?.toString() ?? "",
     year_to: search.year_to?.toString() ?? "",
     price_from: search.price_from?.toString() ?? "",

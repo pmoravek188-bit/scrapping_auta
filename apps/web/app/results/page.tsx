@@ -70,8 +70,9 @@ export default async function ResultsPage({ searchParams }: { searchParams: Prom
   const page = Math.max(1, Number(one(params, "page")) || 1);
   const onlyNew = one(params, "only_new") === "1";
 
-  const make = normalizeMake(one(params, "make")) ?? "";
-  const model = normalizeModel(one(params, "model")) ?? "";
+  const rawMake = one(params, "make");
+  const make = normalizeMake(rawMake) ?? "";
+  const model = normalizeModel(one(params, "model"), rawMake) ?? "";
   const priceFrom = one(params, "price_from");
   const priceTo = one(params, "price_to");
   const yearFrom = one(params, "year_from");

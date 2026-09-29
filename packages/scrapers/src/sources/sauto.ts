@@ -32,9 +32,15 @@
  *   `BODY_SEO_MAP` below), `engine_power_from` (kW). Unmapped enum values are
  *   simply omitted from the query and left to the runner's client-side
  *   matcher.
+ * - Mercedes-Benz lettered classes: confirmed live that `model_cb.seo_name`
+ *   for every one of them (A/B/C/E/S/G/V/T/X) is "tridy-<letter>" (Czech
+ *   genitive "Třídy X", e.g. `{"name":"Třídy V","seo_name":"tridy-v"}` on a
+ *   real V-Class item) — our canonical `<letter>-class` slug is rewritten to
+ *   that via `mercedesClassLetter` before being sent.
  */
 import { z } from "zod";
 import type { RawListing, SearchQuery, FuelType, TransmissionType } from "@scrapping-auta/core";
+import { mercedesClassLetter, normalizeMake } from "@scrapping-auta/core";
 import { fetchJson, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 import { extractPowerKw } from "./_util-b.js";
@@ -84,7 +90,15 @@ export function buildSautoUrl(query: SearchQuery, offset: number, limit = PAGE_S
 
   if (query.make) {
     const make = query.make.toLowerCase();
-    const model = query.model?.toLowerCase();
+    let model = query.model?.toLowerCase() ?? null;
+    // sauto.cz's own `model_cb.seo_name` for every Mercedes-Benz lettered
+    // class is "tridy-<letter>" (Czech genitive "Třídy X"), confirmed live —
+    // never "trida-<letter>"/"<letter>-class"/"<letter>-klasse", which our
+    // canonical slug would otherwise send verbatim and match nothing.
+    if (model && normalizeMake(make) === "mercedes-benz") {
+      const letter = mercedesClassLetter(model);
+      if (letter) model = `tridy-${letter}`;
+    }
     params.set("manufacturer_model_seo", model ? `${make}:${model}` : make);
   }
   if (query.yearFrom) params.set("vehicle_age_from", String(query.yearFrom));

@@ -13,7 +13,7 @@ export interface NormalizeOptions {
 /** Turns a loosely-typed RawListing scraped from a source into a canonical Listing. */
 export function normalizeListing(raw: RawListing, opts: NormalizeOptions): Listing {
   let make = normalizeMake(raw.make ?? null);
-  let model = normalizeModel(raw.model ?? null);
+  let model = normalizeModel(raw.model ?? null, make);
   if (!make || !model) {
     // Some sources (bazos, autoesa, dasweltauto, ...) don't expose make/model
     // as separate fields; best-effort recover them from the free-text title.
@@ -22,6 +22,13 @@ export function normalizeListing(raw: RawListing, opts: NormalizeOptions): Listi
     if (!make) make = inferred.make;
     if (!model) model = inferred.model;
   }
+  // Make can be resolved AFTER model (e.g. a structured `model` field was
+  // present but `make` had to be inferred from the title) — re-apply
+  // model aliasing now that make is fully known, so a Mercedes-Benz class
+  // spelled inconsistently still canonicalizes correctly (see make-model.ts).
+  // Idempotent for every other case (already-canonical/non-Mercedes slugs
+  // pass through unchanged).
+  model = normalizeModel(model, make);
   const currency = (raw.currency ?? "CZK").toUpperCase();
   const priceOrig = raw.price ?? null;
   const priceCzk =

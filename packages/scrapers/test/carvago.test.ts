@@ -47,6 +47,24 @@ describe("carvago adapter", () => {
     expect(url).not.toContain("fuel-type");
   });
 
+  it("omits the model path segment for a Mercedes-Benz class (carvago has no whole-class slug)", () => {
+    // Confirmed live: carvago has no single slug that filters a whole
+    // Mercedes-Benz class — "/cs/auta/mercedes-benz/v-class" (and
+    // "/v-klasse", "/trida-v") all silently redirect back to the unfiltered
+    // make page, since carvago's real model catalog only has individual
+    // engine variants (v-300, v-250, ...). Sending the guessed class slug
+    // anyway would look like it's filtering when it silently isn't, so the
+    // model segment is dropped and only the make filter applies.
+    const url = buildCarvagoUrl({ ...baseQuery, make: "mercedes-benz", model: "v-class" }, 0);
+    expect(url).toContain("/cs/auta/mercedes-benz?");
+    expect(url).not.toContain("v-class");
+  });
+
+  it("still builds a model path for a specific Mercedes-Benz engine variant", () => {
+    const url = buildCarvagoUrl({ ...baseQuery, make: "mercedes-benz", model: "v-300" }, 0);
+    expect(url).toContain("/cs/auta/mercedes-benz/v-300?");
+  });
+
   it("parses listings from the embedded __NEXT_DATA__ JSON", () => {
     const items = parseCarvagoHtml(fixture);
     expect(items).toHaveLength(3);

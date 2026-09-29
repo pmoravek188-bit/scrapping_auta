@@ -76,13 +76,14 @@ interface SearchRow {
 }
 
 function toSearchQuery(row: SearchRow): SearchQuery {
+  const make = normalizeMake(row.make);
   return {
     id: row.id,
     // Saved searches can carry raw, un-normalized user input (e.g. a
     // trailing space, diacritics, or a display name instead of a slug) —
     // normalize here so every adapter and the matcher get a clean slug.
-    make: normalizeMake(row.make),
-    model: normalizeModel(row.model),
+    make,
+    model: normalizeModel(row.model, make),
     yearFrom: row.year_from,
     yearTo: row.year_to,
     priceFrom: row.price_from,
@@ -104,10 +105,11 @@ function toSearchQuery(row: SearchRow): SearchQuery {
  * normalizing make/model the same way a real saved search would be. */
 function toOverrideQuery(override: Partial<SearchQuery>): SearchQuery {
   const parsed = SearchQuerySchema.parse(override);
+  const make = normalizeMake(parsed.make);
   return {
     ...parsed,
-    make: normalizeMake(parsed.make),
-    model: normalizeModel(parsed.model),
+    make,
+    model: normalizeModel(parsed.model, make),
   };
 }
 

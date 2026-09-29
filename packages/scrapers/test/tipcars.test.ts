@@ -53,6 +53,20 @@ describe("tipcars adapter", () => {
     expect(url).toBe("https://www.tipcars.com/ojete/land-rover-discovery?str=1-20");
   });
 
+  it("maps a canonical Mercedes-Benz class slug to tipcars's own 'tridy-<letter>' slug", () => {
+    // Confirmed live: tipcars.com's own URL slug for every Mercedes-Benz
+    // lettered class is "tridy-<letter>" (Czech genitive "Třídy X") —
+    // `/ojete/mercedes-benz-tridy-v` narrows "Zobrazeno N inzerátů" from 302
+    // (unfiltered make) to 216, never "trida-v"/"v-class"/"v-klasse".
+    const url = buildTipCarsUrl({ ...baseQuery, make: "mercedes-benz", model: "v-class" }, 0);
+    expect(url).toBe("https://www.tipcars.com/ojete/mercedes-benz-tridy-v?str=1-20");
+  });
+
+  it("leaves a non-class Mercedes-Benz model slug untouched", () => {
+    const url = buildTipCarsUrl({ ...baseQuery, make: "mercedes-benz", model: "vito" }, 0);
+    expect(url).toBe("https://www.tipcars.com/ojete/mercedes-benz-vito?str=1-20");
+  });
+
   it("parses listings straight from the rendered cards (no ld+json ItemList on the live site anymore), with detail-box-S values for year/mileage/power/fuel/transmission", () => {
     const items = parseTipCarsHtml(fixture);
     expect(items).toHaveLength(3);

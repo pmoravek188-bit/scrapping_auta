@@ -89,7 +89,7 @@ type ModelTuple = [string, string] | [string, string, ModelSegment];
 
 function models(makeSlug: string, pairs: ModelTuple[]): ModelOption[] {
   return pairs.map(([slug, label, segment]) => ({
-    slug: normalizeModel(slug) ?? slug,
+    slug: normalizeModel(slug, makeSlug) ?? slug,
     label,
     ...(segment ? { segment } : {}),
   }));
@@ -160,19 +160,19 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["e-class", "Třída E"],
     ["glc", "GLC"],
     ["gla", "GLA"],
-    // Vans / MPVs / pickups. Sources write the V-Class both as "Třída V"
-    // and as "V-Klasse"/"V-Class" — normalizeModel produces different
-    // slugs for each (no shared alias table), so both are catalogued.
+    // Vans / MPVs / pickups. Sources spell these classes many different
+    // ways ("Třída V"/"Třídy V"/"V-Klasse"/"V-Class"/bare "V") — normalizeModel
+    // now canonicalizes all of them to one slug per class (make-model.ts),
+    // so each class needs only a single catalog entry.
     ["vito", "Vito", "van"],
-    ["v-klasse", "Třída V (V-Klasse)", "mpv"],
-    ["trida-v", "Třída V (V-Klasse)", "mpv"],
+    ["v-class", "Třída V (V-Klasse)", "mpv"],
     ["viano", "Viano", "van"],
     ["sprinter", "Sprinter", "van"],
     ["citan", "Citan", "van"],
-    ["t-klasse", "Třída T (T-Klasse)", "van"],
+    ["t-class", "Třída T (T-Klasse)", "van"],
     ["eqv", "EQV", "van"],
     ["evito", "eVito", "van"],
-    ["x-klasse", "Třída X (X-Class)", "pickup"],
+    ["x-class", "Třída X (X-Class)", "pickup"],
   ]),
   audi: models("audi", [
     ["a1", "A1"],
@@ -474,7 +474,7 @@ export function mergeMakeModelCatalog(
 
   for (const row of dbRows) {
     const make = normalizeMake(row.make);
-    const model = normalizeModel(row.model);
+    const model = normalizeModel(row.model, make);
     if (!make || !model) continue;
     if (!result[make]) result[make] = new Map();
     if (!result[make]!.has(model)) {

@@ -32,7 +32,7 @@ export function matchesSearch(listing: Listing, query: SearchQuery): boolean {
   // with trailing whitespace) — normalize both sides the same way listings
   // themselves are normalized, so the comparison is apples-to-apples.
   const queryMake = normalizeMake(query.make);
-  const queryModel = normalizeModel(query.model);
+  const queryModel = normalizeModel(query.model, queryMake ?? query.make);
 
   if (queryMake && listing.make !== queryMake) return false;
   if (queryModel) {

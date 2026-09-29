@@ -41,6 +41,16 @@
  *   src="https://www.bazos.cz/img/...">` — already an absolute URL, no
  *   lazy-load placeholder. A listing with no photo simply has no such
  *   `<img>`, so `imageUrls` stays `[]` for those.
+ *
+ * Mercedes-Benz lettered classes: unlike the other sources, `query.model`
+ * here is a free-text `hledat` search term, not an enumerated slug, so no
+ * per-letter mapping is needed/possible — confirmed live the canonical
+ * "v-class" keyword returns 200 with plausible (if loosely-filtered)
+ * results, never an error. Bazoš listings also never carry a structured
+ * `model` field anyway (`model: null` below, always inferred from title
+ * text downstream), so final correctness is guaranteed by the runner's
+ * `matchesSearch`/`inferMakeModel` regardless of how precise this
+ * server-side prefilter is.
  */
 import * as cheerio from "cheerio";
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";

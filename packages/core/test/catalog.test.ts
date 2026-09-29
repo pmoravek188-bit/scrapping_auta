@@ -104,12 +104,26 @@ describe("van coverage across every make (not just VW)", () => {
   });
 });
 
-describe("Mercedes-Benz V-Class dual naming", () => {
-  it("catalogues both the 'Třída V' and 'V-Klasse' spellings, since normalizeModel doesn't alias them together", () => {
+describe("Mercedes-Benz lettered classes: one catalog entry per class", () => {
+  it("catalogues the V-Class once, under the canonical 'v-class' slug", () => {
     const bySlug = new Map(POPULAR_MODELS["mercedes-benz"]!.map((m) => [m.slug, m]));
-    expect(bySlug.has("v-klasse")).toBe(true);
-    expect(bySlug.has("trida-v")).toBe(true);
-    expect(normalizeModel("V-Klasse")).toBe("v-klasse");
-    expect(normalizeModel("Třída V")).toBe("trida-v");
+    expect(bySlug.has("v-class")).toBe(true);
+    expect(bySlug.has("v-klasse")).toBe(false);
+    expect(bySlug.has("trida-v")).toBe(false);
+    // Every spelling a source might use now normalizes to that one catalog
+    // slug (see make-model.ts's Mercedes-Benz alias table) — this is what
+    // lets a listing titled "Třída V"/"Třídy V"/"V-Klasse" match a saved
+    // search built from this catalog's "v-class" option.
+    expect(normalizeModel("Třída V", "mercedes-benz")).toBe("v-class");
+    expect(normalizeModel("Třídy V", "mercedes-benz")).toBe("v-class");
+    expect(normalizeModel("V-Klasse", "mercedes-benz")).toBe("v-class");
+  });
+
+  it("renamed T-Class and X-Class to the canonical '<letter>-class' slug", () => {
+    const bySlug = new Map(POPULAR_MODELS["mercedes-benz"]!.map((m) => [m.slug, m]));
+    expect(bySlug.has("t-class")).toBe(true);
+    expect(bySlug.has("t-klasse")).toBe(false);
+    expect(bySlug.has("x-class")).toBe(true);
+    expect(bySlug.has("x-klasse")).toBe(false);
   });
 });

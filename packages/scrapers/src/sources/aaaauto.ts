@@ -33,9 +33,15 @@
  * `Saloon`, numeric `fuelTypeId`, `transmissionId-array`, ...) were silently
  * ignored (same result count as unfiltered), so they're left to the
  * runner's client-side matcher instead of guessing wrong values.
+ *
+ * Mercedes-Benz lettered classes: confirmed live that aaaauto.cz's own model
+ * path segment for every one of them is just the bare letter (e.g.
+ * `/ojete-vozy/mercedes-benz/v`, `totalItems` 14 vs the unfiltered make's
+ * 340) — matching its own structured listing data, where the ld+json
+ * `model` field for a V-Class car is literally `"V"`, not `"V-Class"`.
  */
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
-import { slugifyMakeModel } from "@scrapping-auta/core";
+import { mercedesClassLetter, normalizeMake, slugifyMakeModel } from "@scrapping-auta/core";
 import { fetchText, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 import { extractPowerKw } from "./_util-b.js";
@@ -54,7 +60,10 @@ export function buildAaaAutoUrl(query: SearchQuery, page: number): string {
   let path = "/ojete-vozy";
   if (query.make) {
     path += `/${slugifyMakeModel(query.make)}`;
-    if (query.model) path += `/${slugifyMakeModel(query.model)}`;
+    if (query.model) {
+      const letter = normalizeMake(query.make) === "mercedes-benz" ? mercedesClassLetter(query.model) : null;
+      path += `/${letter ?? slugifyMakeModel(query.model)}`;
+    }
   }
   const params = new URLSearchParams();
   params.set("page", String(page + 1));

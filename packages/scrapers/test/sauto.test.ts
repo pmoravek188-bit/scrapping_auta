@@ -41,6 +41,20 @@ describe("sauto adapter", () => {
     expect(url).not.toContain("fuel_seo");
   });
 
+  it("maps a canonical Mercedes-Benz class slug to sauto's own 'tridy-<letter>' seo slug", () => {
+    // Confirmed live: sauto's model_cb.seo_name for every Mercedes-Benz
+    // lettered class is "tridy-<letter>" (Czech genitive "Třídy X"), never
+    // "v-class"/"trida-v"/"v-klasse" — see make-model.ts's normalizeModel,
+    // which is what produces "v-class" from any of those spellings.
+    const url = buildSautoUrl({ ...baseQuery, make: "mercedes-benz", model: "v-class" }, 0);
+    expect(url).toContain("manufacturer_model_seo=mercedes-benz%3Atridy-v");
+  });
+
+  it("leaves a non-class Mercedes-Benz model slug untouched", () => {
+    const url = buildSautoUrl({ ...baseQuery, make: "mercedes-benz", model: "vito" }, 0);
+    expect(url).toContain("manufacturer_model_seo=mercedes-benz%3Avito");
+  });
+
   it("parses listings from the API response, skipping broken items", () => {
     const items = parseSautoResponse(fixture);
     expect(items).toHaveLength(3);
