@@ -135,20 +135,130 @@ export function mercedesClassLetter(modelSlug: string | null | undefined): strin
 }
 
 /**
+ * Rewrites an already-slugified BMW model string into our canonical
+ * `${n}-series[-<detail>]` form (n = 1..8), tolerating every spelling
+ * sources use for a numbered BMW series:
+ *   - Czech: "rada-3" (Řada 3) — confirmed live: sauto.cz's `model_cb.seo_name`
+ *     and tipcars.com's listing-detail URL slug for every BMW 3-series car
+ *     are literally "rada-3", not "3-series".
+ *   - German: "3er"
+ *   - reversed order: "series-3"
+ *   - English: "3-series" (already canonical; idempotent)
+ *   - a bare engine-designation code with no series word at all, e.g. "320",
+ *     "320d", "318i", "530d", "116d" — confirmed live: autoscout24.cz's
+ *     structured `vehicle.model` field for a 3-series car is literally "320"
+ *     or "318" (no suffix letter, no series word), and aaaauto.cz's ld+json
+ *     `model` field for one is the bare digit "3". The series number is the
+ *     code's *first* digit (BMW's own numbering scheme: 3xx -> 3 Series, 1xx
+ *     -> 1 Series, etc. up to 7xx -> 7 Series); trailing engine-suffix
+ *     letters (d/i/e/xd/...) are preserved as part of the detail suffix so
+ *     `matcher.ts`'s `${query}-` prefix matching still works.
+ *   - an "M Performance" trim of a numbered series, e.g. "m340i", "m235i",
+ *     "m550i" — these are trims of the base series (BMW sells them alongside
+ *     the ordinary 340i/235i/550i, same chassis), so they're folded into
+ *     that series too, as `${n}-series-m<code>`.
+ * Deliberately NOT touched: bare `M2`/`M3`/`M4`/`M5`/`M6`/`M8` (the standalone
+ * M-badged model line — a distinct chassis/engine, not just a series trim,
+ * so a "3-series" search should not silently pull in M3s), and the X/Z/i
+ * lines (`x1`, `x5`, `z4`, `i3`, `i4`, `ix`, ...), which are separate model
+ * lines already spelled consistently across sources and need no aliasing.
+ */
+function applyBmwModelAlias(slug: string): string {
+  const tokens = slug.split("-").filter(Boolean);
+  if (tokens.length === 0) return slug;
+  const [first, ...rest] = tokens;
+  if (!first) return slug;
+
+  // Already canonical "N-series[-detail]".
+  if (/^[1-8]$/.test(first) && rest[0] === "series") return slug;
+
+  // Czech "Řada N" -> "rada-n".
+  if (first === "rada" && rest[0] && /^[1-8]$/.test(rest[0])) {
+    return [`${rest[0]}-series`, ...rest.slice(1)].join("-");
+  }
+  // Reversed "series-n".
+  if (first === "series" && rest[0] && /^[1-8]$/.test(rest[0])) {
+    return [`${rest[0]}-series`, ...rest.slice(1)].join("-");
+  }
+  // German "3er".
+  let m = /^([1-8])er$/.exec(first);
+  if (m) return [`${m[1]}-series`, ...rest].join("-");
+
+  // A bare series number with no other token, e.g. "3".
+  if (tokens.length === 1 && /^[1-8]$/.test(first)) return `${first}-series`;
+
+  // "M Performance" trim of a numbered series, e.g. "m340i", "m235i".
+  m = /^m([1-8])(\d{2}[a-z]*)$/.exec(first);
+  if (m) return [`${m[1]}-series`, `m${m[1]}${m[2]}`, ...rest].join("-");
+
+  // Bare engine-designation code, e.g. "320", "320d", "318i", "116d".
+  m = /^([1-8])(\d{2})([a-z]*)$/.exec(first);
+  if (m) return [`${m[1]}-series`, first, ...rest].join("-");
+
+  return slug;
+}
+
+/** If `modelSlug` (as produced by `normalizeModel`) is one of the canonical
+ * numbered BMW series (1-series, 2-series, ..., 8-series), returns the bare
+ * digit; otherwise null. Exported so source adapters that need the source's
+ * own spelling of a whole series (sauto/tipcars: "rada-<n>"; aaaauto: bare
+ * "<n>") can translate our canonical slug back to it, the same way
+ * `mercedesClassLetter` does for Mercedes-Benz classes. */
+export function bmwSeriesNumber(modelSlug: string | null | undefined): string | null {
+  if (!modelSlug) return null;
+  const m = /^([1-8])-series(?:-|$)/.exec(modelSlug);
+  return m?.[1] ?? null;
+}
+
+/** Toyota spells its compact SUV "RAV4" (no space/hyphen before the digit);
+ * naive slugifying of a source's "RAV 4" text produces "rav-4", which would
+ * never match the catalog's "rav4" slug without this. */
+function applyToyotaModelAlias(slug: string): string {
+  if (slug === "rav-4" || slug.startsWith("rav-4-")) return slug.replace(/^rav-4/, "rav4");
+  return slug;
+}
+
+/** Mazda's own listing data typically gives the bare model number ("2", "3",
+ * "6") since the make is already "Mazda" — our catalog (and most sources'
+ * own URLs) instead use "mazda2"/"mazda3"/"mazda6". */
+function applyMazdaModelAlias(slug: string): string {
+  const tokens = slug.split("-").filter(Boolean);
+  const first = tokens[0];
+  if (first && /^[236]$/.test(first)) {
+    return [`mazda${first}`, ...tokens.slice(1)].join("-");
+  }
+  return slug;
+}
+
+/** Per-make model-alias functions, applied after basic slugifying so every
+ * real-world spelling sources use converges on one canonical slug per make's
+ * model (see each function's doc comment for the spellings it covers). Keyed
+ * by the *canonical* make slug (`normalizeMake`'s output). Extend this table
+ * — rather than special-casing `normalizeModel` further — when a new make's
+ * models turn out to need aliasing too. */
+const MODEL_ALIAS_FNS: Record<string, (slug: string) => string> = {
+  "mercedes-benz": applyMercedesModelAlias,
+  bmw: applyBmwModelAlias,
+  toyota: applyToyotaModelAlias,
+  mazda: applyMazdaModelAlias,
+};
+
+/**
  * Normalizes a model name to a comparable slug (best-effort, no full alias
  * table for most makes). When `make` is given (raw or already-normalized)
- * and resolves to Mercedes-Benz, also canonicalizes the many spellings
- * sources use for its lettered classes (see `applyMercedesModelAlias`) so
- * "Třída V"/"Třídy V"/"V-Klasse"/"V-Class"/"V" all normalize to the same
- * "v-class" slug — without this, listings and saved-search queries spelled
- * differently would never match each other (see catalog.ts, matcher.ts).
+ * and resolves to a make with a registered alias function (`MODEL_ALIAS_FNS`
+ * above — currently Mercedes-Benz, BMW, Toyota, Mazda), also canonicalizes
+ * the many spellings sources use for that make's models (e.g. Mercedes
+ * "Třída V"/"Třídy V"/"V-Klasse"/"V-Class"/"V", or BMW "Řada 3"/"3er"/"320d")
+ * so listings and saved-search queries spelled differently still normalize
+ * to the same slug — without this, they'd never match each other (see
+ * catalog.ts, matcher.ts).
  */
 export function normalizeModel(value: string | null | undefined, make?: string | null): string | null {
   if (!value) return null;
   const slug = slugifyMakeModel(value);
   if (!slug) return null;
-  if (make && normalizeMake(make) === "mercedes-benz") {
-    return applyMercedesModelAlias(slug);
-  }
-  return slug;
+  const canonicalMake = make ? normalizeMake(make) : null;
+  const aliasFn = canonicalMake ? MODEL_ALIAS_FNS[canonicalMake] : null;
+  return aliasFn ? aliasFn(slug) : slug;
 }

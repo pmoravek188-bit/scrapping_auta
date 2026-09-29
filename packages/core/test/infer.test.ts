@@ -45,6 +45,18 @@ describe("inferMakeModel", () => {
     });
   });
 
+  it("matches a catalog model by its (localized) label, not just its slug — e.g. BMW 'Řada 3'", () => {
+    // Regression: a source without a structured model field (Auto ESA,
+    // confirmed live via the audit script) titles a BMW 3-series listing
+    // "BMW Řada 3 2011" — the catalog's canonical slug is "3-series", so
+    // slug-only phrase matching ("3 series") never finds it in the Czech
+    // text, and the old digit-stopping fallback truncated it down to just
+    // "rada" (losing the series number). Matching the catalog label ("Řada
+    // 3" -> "rada 3") too fixes this without a BMW-specific special case.
+    expect(inferMakeModel("BMW Řada 3 2011")).toEqual({ make: "bmw", model: "3-series" });
+    expect(inferMakeModel("BMW Řada 5 2017")).toEqual({ make: "bmw", model: "5-series" });
+  });
+
   it("returns nulls for text with no recognizable make", () => {
     expect(inferMakeModel("Skvělý stav, nová STK")).toEqual({ make: null, model: null });
   });

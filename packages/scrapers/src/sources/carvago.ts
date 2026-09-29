@@ -48,7 +48,7 @@
  */
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
 import type { FuelType, TransmissionType } from "@scrapping-auta/core";
-import { mercedesClassLetter, normalizeMake, slugifyMakeModel } from "@scrapping-auta/core";
+import { bmwSeriesNumber, mercedesClassLetter, normalizeMake, slugifyMakeModel } from "@scrapping-auta/core";
 import { fetchText, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 
@@ -133,7 +133,18 @@ export function buildCarvagoUrl(query: SearchQuery, page: number): string {
       query.model != null &&
       normalizeMake(query.make) === "mercedes-benz" &&
       mercedesClassLetter(query.model) != null;
-    if (query.model && !isUnmappableMercedesClass) path += `/${slugifyMakeModel(query.model)}`;
+    // Like the Mercedes lettered classes, carvago has no single model slug
+    // for a whole BMW numbered series either — confirmed live that
+    // `/cs/auta/bmw/3-series`, `/rada-3` and bare `/3` all silently redirect
+    // back to the unfiltered `/cs/auta/bmw` (same ~82.8k total); only
+    // specific engine variants ("320", "318", ...) actually filter. Since we
+    // only know the series, not the engine variant, the model segment is
+    // omitted and the make filter + client-side `matchesSearch` do the rest.
+    const isUnmappableBmwSeries =
+      query.model != null && normalizeMake(query.make) === "bmw" && bmwSeriesNumber(query.model) != null;
+    if (query.model && !isUnmappableMercedesClass && !isUnmappableBmwSeries) {
+      path += `/${slugifyMakeModel(query.model)}`;
+    }
   }
   const params = new URLSearchParams();
   params.set("page", String(page + 1));

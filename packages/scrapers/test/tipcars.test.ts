@@ -67,6 +67,20 @@ describe("tipcars adapter", () => {
     expect(url).toBe("https://www.tipcars.com/ojete/mercedes-benz-vito?str=1-20");
   });
 
+  it("maps a canonical BMW numbered-series slug to tipcars's own 'rada-<n>' slug", () => {
+    // Confirmed live: a BMW 3-series listing's own detail URL is under
+    // "/bmw-rada-3/...", and `/ojete/bmw-rada-3` narrows the listing count
+    // (unlike `/ojete/bmw-3-series`, which 404s — the bug that made the
+    // production saved search return nothing).
+    const url = buildTipCarsUrl({ ...baseQuery, make: "bmw", model: "3-series" }, 0);
+    expect(url).toBe("https://www.tipcars.com/ojete/bmw-rada-3?str=1-20");
+  });
+
+  it("collapses a specific BMW engine-code model down to the whole-series 'rada-<n>' slug", () => {
+    const url = buildTipCarsUrl({ ...baseQuery, make: "bmw", model: "3-series-320d" }, 0);
+    expect(url).toBe("https://www.tipcars.com/ojete/bmw-rada-3?str=1-20");
+  });
+
   it("parses listings straight from the rendered cards (no ld+json ItemList on the live site anymore), with detail-box-S values for year/mileage/power/fuel/transmission", () => {
     const items = parseTipCarsHtml(fixture);
     expect(items).toHaveLength(3);

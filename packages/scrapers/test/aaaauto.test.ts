@@ -42,6 +42,24 @@ describe("aaaauto adapter", () => {
     expect(url).toContain("/ojete-vozy/mercedes-benz/vito?");
   });
 
+  it("maps a canonical BMW numbered-series slug to aaaauto's own bare-digit model path", () => {
+    // Confirmed live: aaaauto.cz's own model path segment for a BMW
+    // 3-series car is the bare digit "3" (/ojete-vozy/bmw/3), matching its
+    // own ld+json `model` field, which is literally "3".
+    const url = buildAaaAutoUrl({ ...baseQuery, make: "bmw", model: "3-series" }, 0);
+    expect(url).toContain("/ojete-vozy/bmw/3?");
+  });
+
+  it("collapses a specific BMW engine-code model down to the bare series digit", () => {
+    const url = buildAaaAutoUrl({ ...baseQuery, make: "bmw", model: "3-series-320d" }, 0);
+    expect(url).toContain("/ojete-vozy/bmw/3?");
+  });
+
+  it("leaves a non-numbered BMW model slug (X/M/Z/i line) untouched", () => {
+    const url = buildAaaAutoUrl({ ...baseQuery, make: "bmw", model: "x5" }, 0);
+    expect(url).toContain("/ojete-vozy/bmw/x5?");
+  });
+
   it("only applies the confirmed body filter values", () => {
     const suvUrl = buildAaaAutoUrl({ ...baseQuery, body: ["suv"] }, 0);
     expect(suvUrl).toContain("bodyTypeId-array=SUV");

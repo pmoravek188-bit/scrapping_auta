@@ -40,7 +40,7 @@
  */
 import { z } from "zod";
 import type { RawListing, SearchQuery, FuelType, TransmissionType } from "@scrapping-auta/core";
-import { mercedesClassLetter, normalizeMake } from "@scrapping-auta/core";
+import { bmwSeriesNumber, mercedesClassLetter, normalizeMake } from "@scrapping-auta/core";
 import { fetchJson, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 import { extractPowerKw } from "./_util-b.js";
@@ -98,6 +98,16 @@ export function buildSautoUrl(query: SearchQuery, offset: number, limit = PAGE_S
     if (model && normalizeMake(make) === "mercedes-benz") {
       const letter = mercedesClassLetter(model);
       if (letter) model = `tridy-${letter}`;
+    }
+    // BMW numbered series ("3-series") -> sauto's own "rada-<n>" (Czech
+    // "Řada N") seo slug — confirmed live: `model_cb.seo_name` for a BMW
+    // 3-series car is "rada-3", never "3-series". A specific engine code
+    // (e.g. "3-series-320d") also collapses to the whole-series slug here
+    // since sauto has no narrower per-engine model filter; the runner's
+    // client-side matcher still narrows by the full model text afterwards.
+    if (model && normalizeMake(make) === "bmw") {
+      const n = bmwSeriesNumber(model);
+      if (n) model = `rada-${n}`;
     }
     params.set("manufacturer_model_seo", model ? `${make}:${model}` : make);
   }

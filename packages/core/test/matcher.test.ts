@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { matchesSearch } from "../src/matcher.js";
+import { explainMatch, matchesSearch } from "../src/matcher.js";
 import { normalizeListing } from "../src/normalize.js";
 import type { SearchQuery } from "../src/schemas.js";
 
@@ -126,6 +126,137 @@ describe("matchesSearch", () => {
       sources: [],
     };
     expect(matchesSearch(listing, q)).toBe(false); // listing.fuel is "diesel"
+  });
+
+  it("treats a null drive on the listing as unknown (passes), not a mismatch", () => {
+    // `listing` above has no `drive` field, so normalizeListing leaves it null.
+    expect(listing.drive).toBeNull();
+    const q: SearchQuery = {
+      drive: ["awd"],
+      fuel: [],
+      body: [],
+      keywords: [],
+      excludeKeywords: [],
+      sources: [],
+    };
+    // A source that can't tell drive type (many list pages don't expose it)
+    // must not silently drop an otherwise-matching car just because this
+    // particular listing didn't state a confirmed drive type.
+    expect(matchesSearch(listing, q)).toBe(true);
+  });
+
+  it("still rejects when the listing DOES state a conflicting drive type", () => {
+    const fwd = normalizeListing(
+      {
+        sourceId: "3",
+        url: "https://example.com/3",
+        title: "Škoda Octavia Combi 2.0 TDI",
+        make: "Škoda",
+        model: "Octavia",
+        year: 2020,
+        mileageKm: 60000,
+        price: 450000,
+        currency: "CZK",
+        drive: "fwd",
+      },
+      { source: "carvago" }
+    );
+    const q: SearchQuery = {
+      drive: ["awd"],
+      fuel: [],
+      body: [],
+      keywords: [],
+      excludeKeywords: [],
+      sources: [],
+    };
+    expect(matchesSearch(fwd, q)).toBe(false);
+  });
+});
+
+describe("explainMatch", () => {
+  it("returns null for a full match", () => {
+    const q: SearchQuery = {
+      make: "skoda",
+      model: "octavia",
+      fuel: [],
+      body: [],
+      keywords: [],
+      excludeKeywords: [],
+      sources: [],
+    };
+    expect(explainMatch(listing, q)).toBeNull();
+  });
+
+  it("returns the first failing criterion, in a fixed check order (make before model before year...)", () => {
+    const q: SearchQuery = {
+      make: "bmw",
+      model: "3-series",
+      yearFrom: 2099,
+      fuel: [],
+      body: [],
+      keywords: [],
+      excludeKeywords: [],
+      sources: [],
+    };
+    expect(explainMatch(listing, q)).toBe("make");
+  });
+
+  it("identifies a model mismatch distinctly from a make mismatch", () => {
+    const q: SearchQuery = {
+      make: "skoda",
+      model: "fabia",
+      fuel: [],
+      body: [],
+      keywords: [],
+      excludeKeywords: [],
+      sources: [],
+    };
+    expect(explainMatch(listing, q)).toBe("model");
+  });
+
+  it("identifies each of price/mileage/fuel/drive/features as distinct reasons", () => {
+    expect(
+      explainMatch(listing, {
+        priceTo: 100,
+        fuel: [],
+        body: [],
+        keywords: [],
+        excludeKeywords: [],
+        sources: [],
+      })
+    ).toBe("price");
+
+    expect(
+      explainMatch(listing, {
+        mileageMax: 1,
+        fuel: [],
+        body: [],
+        keywords: [],
+        excludeKeywords: [],
+        sources: [],
+      })
+    ).toBe("mileage");
+
+    expect(
+      explainMatch(listing, {
+        fuel: ["petrol"],
+        body: [],
+        keywords: [],
+        excludeKeywords: [],
+        sources: [],
+      })
+    ).toBe("fuel");
+
+    expect(
+      explainMatch(listing, {
+        fuel: [],
+        body: [],
+        features: ["prodlouzena"],
+        keywords: [],
+        excludeKeywords: [],
+        sources: [],
+      })
+    ).toBe("features");
   });
 });
 

@@ -6,10 +6,11 @@
   "main": "./src/index.ts",
   "types": "./src/index.ts",
   "scripts": {
-    "lint": "eslint src test",
+    "lint": "eslint src test scripts",
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
-    "scrape": "tsx src/cli.ts"
+    "scrape": "tsx src/cli.ts",
+    "audit:sources": "tsx scripts/audit.ts"
   },
   "dependencies": {
     "@scrapping-auta/core": "workspace:*",

@@ -32,15 +32,30 @@ function normalizeTitleText(title: string): string {
 }
 
 /** Finds the longest catalog model (e.g. "octavia-combi" before "octavia")
- * that appears as a whole-word phrase anywhere in `normalizedText`. */
+ * that appears as a whole-word phrase anywhere in `normalizedText`. Tries
+ * both the model's canonical slug (e.g. "3-series" -> "3 series") AND its
+ * catalog label (e.g. "Řada 3" -> "rada 3") as candidate phrases — sources
+ * that don't expose a structured model field often spell it in their own
+ * language/notation in the title (Czech "Řada 3", German "3er", ...) rather
+ * than the slug's English wording, so slug-only matching would silently miss
+ * those and fall through to `fallbackModelWords`, which stops at the first
+ * digit and would truncate "Řada 3" down to just "Řada" (losing the series
+ * number entirely — confirmed live via the audit script against Auto ESA
+ * titles like "BMW Řada 3 2011"). Matching the label too fixes this
+ * generically for every make's catalog, not just BMW. */
 function findModelInText(normalizedText: string, models: ModelOption[]): string | null {
   const padded = ` ${normalizedText} `;
-  const sorted = [...models].sort(
-    (a, b) => b.slug.split("-").length - a.slug.split("-").length || b.slug.length - a.slug.length
+  const candidates = models.flatMap((m) => {
+    const slugPhrase = m.slug.replace(/-/g, " ");
+    const labelPhrase = normalizeTitleText(m.label).replace(/-/g, " ");
+    const phrases = new Set([slugPhrase, labelPhrase]);
+    return [...phrases].map((phrase) => ({ slug: m.slug, phrase }));
+  });
+  const sorted = candidates.sort(
+    (a, b) => b.phrase.split(" ").length - a.phrase.split(" ").length || b.phrase.length - a.phrase.length
   );
-  for (const m of sorted) {
-    const phrase = ` ${m.slug.replace(/-/g, " ")} `;
-    if (padded.includes(phrase)) return m.slug;
+  for (const c of sorted) {
+    if (padded.includes(` ${c.phrase} `)) return c.slug;
   }
   return null;
 }

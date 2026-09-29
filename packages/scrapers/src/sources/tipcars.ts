@@ -76,6 +76,7 @@ import * as cheerio from "cheerio";
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
 import {
   MAKE_ALIASES,
+  bmwSeriesNumber,
   inferMakeModel,
   isKnownMakeSlug,
   mercedesClassLetter,
@@ -107,6 +108,16 @@ export function buildTipCarsUrl(query: SearchQuery, page: number): string {
     if (modelSlug && normalizeMake(query.make) === "mercedes-benz") {
       const letter = mercedesClassLetter(modelSlug);
       if (letter) modelSlug = `tridy-${letter}`;
+    }
+    // BMW numbered series ("3-series") -> tipcars' own "rada-<n>" slug —
+    // confirmed live: a BMW 3-series listing's own detail URL is
+    // "/bmw-rada-3/...", and `/ojete/bmw-rada-3` (unlike `/ojete/bmw-3-series`,
+    // which 404s) actually narrows the "ojete" listing count. A specific
+    // engine code (e.g. "3-series-320d") also collapses to the whole-series
+    // slug, same as sauto.
+    if (modelSlug && normalizeMake(query.make) === "bmw") {
+      const n = bmwSeriesNumber(modelSlug);
+      if (n) modelSlug = `rada-${n}`;
     }
     path += `/${makeSlug}${modelSlug ? `-${modelSlug}` : ""}`;
   }

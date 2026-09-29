@@ -67,13 +67,25 @@ export interface SaveSearchResult {
 type ListingRow = Database["public"]["Tables"]["listings"]["Row"];
 
 function rowToListing(row: ListingRow): Listing {
+  // Defensively re-run `normalizeModel` on the stored value rather than
+  // trusting `row.model` as-is: rows scraped before a model-alias fix lands
+  // (e.g. the BMW "Řada 3"/"320d"/... -> "3-series" aliasing added alongside
+  // this comment) keep their OLD, un-aliased slug in the DB until the
+  // scraper next re-fetches that listing and upserts a fresh value. Since
+  // `normalizeModel` is a pure function of (model, make), re-applying it
+  // here costs nothing and means a stale row still rematches correctly in
+  // the meantime — no migration needed to rewrite `listings.model` (see the
+  // matching change to the candidate query below, which is the other half
+  // of this: relying on this recompute instead of a possibly-stale SQL
+  // filter on the raw column).
+  const make = normalizeMake(row.make);
   return {
     source: row.source,
     sourceId: row.source_id,
     url: row.url,
     title: row.title,
-    make: row.make,
-    model: row.model,
+    make,
+    model: normalizeModel(row.model, make),
     variant: row.variant,
     year: row.year,
     mileageKm: row.mileage_km,
@@ -201,9 +213,20 @@ export async function rematchSearch(db: Db, searchId: string): Promise<number> {
 
   const query = toSearchQuery(search);
 
+  // Model filtering is deliberately NOT pushed into this SQL prefilter (only
+  // make/price/year are, all cheap and always correct — make normalization
+  // is stable). `listings.model` can still hold an old, un-aliased raw slug
+  // for a row the scraper hasn't re-fetched since a model-alias fix landed
+  // (e.g. a BMW row stored as "320d" before the "Řada 3"/"320d"/...
+  // -> "3-series" aliasing was added) — an `.eq`/`.like` condition on that
+  // raw column would silently exclude exactly the stale rows a rematch is
+  // supposed to fix, without ever reaching `matchesSearch`. Instead, every
+  // candidate for the make is fetched and `rowToListing` recomputes its
+  // model via `normalizeModel` before `matchesSearch` compares it — the
+  // matcher's own model-matching logic (exact/prefix/title-fallback) does
+  // the real filtering, same as the scraper.
   let candidateQuery = db.from("listings").select("*").eq("is_active", true).order("id");
   if (query.make) candidateQuery = candidateQuery.eq("make", query.make);
-  if (query.model) candidateQuery = candidateQuery.or(`model.eq.${query.model},model.like.${query.model}-%`);
   if (query.priceFrom != null) candidateQuery = candidateQuery.gte("price_czk", query.priceFrom);
   if (query.priceTo != null) candidateQuery = candidateQuery.lte("price_czk", query.priceTo);
   if (query.yearFrom != null) candidateQuery = candidateQuery.gte("year", query.yearFrom);

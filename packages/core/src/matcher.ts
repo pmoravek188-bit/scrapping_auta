@@ -26,95 +26,129 @@ function modelMatches(listingModel: string | null, queryModel: string, titleHays
   return includesToken(titleHaystack, queryModel.replace(/-/g, " "));
 }
 
-/** Returns true if a normalized Listing satisfies a saved SearchQuery. */
-export function matchesSearch(listing: Listing, query: SearchQuery): boolean {
+/** The criteria `explainMatch`/`matchesSearch` can reject a listing on. Kept
+ * as plain strings (rather than an enum) so the audit script (see
+ * `scripts/audit.ts`) can tally rejection reasons by name without importing
+ * anything beyond this type. */
+export type MatchFailureReason =
+  | "make"
+  | "model"
+  | "year"
+  | "price"
+  | "mileage"
+  | "fuel"
+  | "transmission"
+  | "body"
+  | "power"
+  | "drive"
+  | "features"
+  | "keywords"
+  | "excludeKeywords"
+  | "sources";
+
+/**
+ * Returns the first criterion on which `listing` fails to satisfy `query`,
+ * or `null` if it's a full match. Checks run in a fixed, documented order so
+ * "first failing reason" is deterministic and meaningful for debugging/audit
+ * purposes (see `scripts/audit.ts`) — it is NOT necessarily "the only thing
+ * wrong with this listing", just the first thing checked.
+ */
+export function explainMatch(listing: Listing, query: SearchQuery): MatchFailureReason | null {
   // Saved searches can carry raw, un-normalized user input (e.g. "ford "
   // with trailing whitespace) — normalize both sides the same way listings
   // themselves are normalized, so the comparison is apples-to-apples.
   const queryMake = normalizeMake(query.make);
   const queryModel = normalizeModel(query.model, queryMake ?? query.make);
 
-  if (queryMake && listing.make !== queryMake) return false;
+  if (queryMake && listing.make !== queryMake) return "make";
   if (queryModel) {
     const titleHaystack = `${listing.title} ${listing.variant ?? ""}`;
-    if (!modelMatches(listing.model, queryModel, titleHaystack)) return false;
+    if (!modelMatches(listing.model, queryModel, titleHaystack)) return "model";
   }
 
   if (query.yearFrom != null && (listing.year == null || listing.year < query.yearFrom)) {
-    return false;
+    return "year";
   }
   if (query.yearTo != null && (listing.year == null || listing.year > query.yearTo)) {
-    return false;
+    return "year";
   }
 
   if (
     query.priceFrom != null &&
     (listing.priceCzk == null || listing.priceCzk < query.priceFrom)
   ) {
-    return false;
+    return "price";
   }
   if (query.priceTo != null && (listing.priceCzk == null || listing.priceCzk > query.priceTo)) {
-    return false;
+    return "price";
   }
 
   if (
     query.mileageMax != null &&
     (listing.mileageKm == null || listing.mileageKm > query.mileageMax)
   ) {
-    return false;
+    return "mileage";
   }
 
-  // fuel/transmission/body/power are frequently absent from a source's list
-  // page (e.g. sauto's search API never returns engine power) — treat a
+  // fuel/transmission/body/power/drive are frequently absent from a source's
+  // list page (e.g. sauto's search API never returns engine power) — treat a
   // null listing value as "unknown", not a mismatch, so real matches aren't
   // silently dropped just because one source can't supply that field. Only
   // reject when the listing DOES state a value and it disagrees with the
   // query. (year/price/mileage stay strict: those are numeric filters the
   // user set deliberately, and every source does supply them.)
   if (query.fuel && query.fuel.length > 0 && listing.fuel != null) {
-    if (!query.fuel.includes(listing.fuel)) return false;
+    if (!query.fuel.includes(listing.fuel)) return "fuel";
   }
 
   if (query.transmission && listing.transmission != null && listing.transmission !== query.transmission) {
-    return false;
+    return "transmission";
   }
 
   if (query.body && query.body.length > 0 && listing.body != null) {
-    if (!query.body.includes(listing.body)) return false;
+    if (!query.body.includes(listing.body)) return "body";
   }
 
   if (query.powerMinKw != null && listing.powerKw != null && listing.powerKw < query.powerMinKw) {
-    return false;
+    return "power";
   }
 
-  // Drive type (AWD/FWD/RWD): unlike fuel/transmission/body/power above, a
-  // ticked drive filter is NOT lenient on null — the user explicitly wants
-  // certainty (e.g. "only show me confirmed 4x4s"), so an un-inferred
-  // listing.drive is treated as a non-match rather than "maybe".
-  if (query.drive && query.drive.length > 0) {
-    if (!listing.drive || !query.drive.includes(listing.drive)) return false;
+  // Drive type (AWD/FWD/RWD): same leniency policy as fuel/transmission/body/
+  // power above. A source frequently doesn't expose drive type at all (it's
+  // often only inferable from trim text like "xDrive"/"4Matic"/"quattro"),
+  // so treating an unknown listing.drive as a non-match would silently drop
+  // plenty of real AWD cars just because this particular source/listing
+  // didn't state it — worse than occasionally showing an unconfirmed one.
+  // Only reject when the listing DOES state a drive type and it disagrees.
+  if (query.drive && query.drive.length > 0 && listing.drive != null) {
+    if (!query.drive.includes(listing.drive)) return "drive";
   }
 
   // Equipment/version chips ("Výbava"/"Verze"): every ticked feature must be
   // detectable in the listing's title/variant/equipment text.
   if (query.features && query.features.length > 0) {
     const featureHaystack = `${listing.title} ${listing.variant ?? ""} ${(listing.equipment ?? []).join(" ")}`;
-    if (!hasAllFeatures(featureHaystack, query.features)) return false;
+    if (!hasAllFeatures(featureHaystack, query.features)) return "features";
   }
 
   const haystack = `${listing.title} ${listing.variant ?? ""}`;
   if (query.keywords && query.keywords.length > 0) {
     const ok = query.keywords.some((kw) => includesToken(haystack, kw));
-    if (!ok) return false;
+    if (!ok) return "keywords";
   }
   if (query.excludeKeywords && query.excludeKeywords.length > 0) {
     const bad = query.excludeKeywords.some((kw) => includesToken(haystack, kw));
-    if (bad) return false;
+    if (bad) return "excludeKeywords";
   }
 
   if (query.sources && query.sources.length > 0) {
-    if (!query.sources.includes(listing.source)) return false;
+    if (!query.sources.includes(listing.source)) return "sources";
   }
 
-  return true;
+  return null;
+}
+
+/** Returns true if a normalized Listing satisfies a saved SearchQuery. */
+export function matchesSearch(listing: Listing, query: SearchQuery): boolean {
+  return explainMatch(listing, query) == null;
 }

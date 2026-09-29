@@ -41,7 +41,7 @@
  * `model` field for a V-Class car is literally `"V"`, not `"V-Class"`.
  */
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
-import { mercedesClassLetter, normalizeMake, slugifyMakeModel } from "@scrapping-auta/core";
+import { bmwSeriesNumber, mercedesClassLetter, normalizeMake, slugifyMakeModel } from "@scrapping-auta/core";
 import { fetchText, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 import { extractPowerKw } from "./_util-b.js";
@@ -61,8 +61,14 @@ export function buildAaaAutoUrl(query: SearchQuery, page: number): string {
   if (query.make) {
     path += `/${slugifyMakeModel(query.make)}`;
     if (query.model) {
+      const isBmw = normalizeMake(query.make) === "bmw";
       const letter = normalizeMake(query.make) === "mercedes-benz" ? mercedesClassLetter(query.model) : null;
-      path += `/${letter ?? slugifyMakeModel(query.model)}`;
+      // aaaauto.cz's own model path segment for a BMW numbered series is the
+      // bare digit (e.g. `/ojete-vozy/bmw/3`, confirmed live) — matching its
+      // own structured listing data, where the ld+json `model` field for a
+      // 3-series car is literally "3".
+      const bmwDigit = isBmw ? bmwSeriesNumber(query.model) : null;
+      path += `/${letter ?? bmwDigit ?? slugifyMakeModel(query.model)}`;
     }
   }
   const params = new URLSearchParams();

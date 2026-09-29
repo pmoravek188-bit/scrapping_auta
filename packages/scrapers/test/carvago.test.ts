@@ -65,6 +65,20 @@ describe("carvago adapter", () => {
     expect(url).toContain("/cs/auta/mercedes-benz/v-300?");
   });
 
+  it("omits the model path segment for a BMW numbered series (carvago has no whole-series slug)", () => {
+    // Confirmed live: "/cs/auta/bmw/3-series", "/rada-3" and bare "/3" all
+    // silently redirect back to the unfiltered "/cs/auta/bmw" (same ~82.8k
+    // total); only specific engine variants ("320", "318", ...) filter.
+    const url = buildCarvagoUrl({ ...baseQuery, make: "bmw", model: "3-series" }, 0);
+    expect(url).toContain("/cs/auta/bmw?");
+    expect(url).not.toContain("3-series");
+  });
+
+  it("still builds a model path for a specific BMW engine variant", () => {
+    const url = buildCarvagoUrl({ ...baseQuery, make: "bmw", model: "320" }, 0);
+    expect(url).toContain("/cs/auta/bmw/320?");
+  });
+
   it("parses listings from the embedded __NEXT_DATA__ JSON", () => {
     const items = parseCarvagoHtml(fixture);
     expect(items).toHaveLength(3);

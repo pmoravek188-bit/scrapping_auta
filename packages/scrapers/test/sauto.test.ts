@@ -55,6 +55,25 @@ describe("sauto adapter", () => {
     expect(url).toContain("manufacturer_model_seo=mercedes-benz%3Avito");
   });
 
+  it("maps a canonical BMW numbered-series slug to sauto's own 'rada-<n>' seo slug", () => {
+    // Confirmed live: sauto's model_cb.seo_name for every BMW 3-series car
+    // is "rada-3" (Czech "Řada 3"), never "3-series" — sending the literal
+    // canonical slug is exactly the bug that made the saved BMW 3-series
+    // search return 0 matches.
+    const url = buildSautoUrl({ ...baseQuery, make: "bmw", model: "3-series" }, 0);
+    expect(url).toContain("manufacturer_model_seo=bmw%3Arada-3");
+  });
+
+  it("collapses a specific BMW engine-code model down to the whole-series 'rada-<n>' slug", () => {
+    const url = buildSautoUrl({ ...baseQuery, make: "bmw", model: "3-series-320d" }, 0);
+    expect(url).toContain("manufacturer_model_seo=bmw%3Arada-3");
+  });
+
+  it("leaves a non-numbered BMW model slug (X/M/Z/i line) untouched", () => {
+    const url = buildSautoUrl({ ...baseQuery, make: "bmw", model: "x5" }, 0);
+    expect(url).toContain("manufacturer_model_seo=bmw%3Ax5");
+  });
+
   it("parses listings from the API response, skipping broken items", () => {
     const items = parseSautoResponse(fixture);
     expect(items).toHaveLength(3);
