@@ -11,7 +11,7 @@ export default async function DashboardPage() {
   const supabase = await createSupabaseServerClient();
   if (!supabase) return <NotConfigured />;
 
-  const [{ data: matches }, { data: sourceRows }] = await Promise.all([
+  const [{ data: matches }, { data: sourceRows }, { data: favoriteRows }] = await Promise.all([
     supabase
       .from("matches")
       .select("id, matched_at, status, searches(id, name), listings(*)")
@@ -19,7 +19,11 @@ export default async function DashboardPage() {
       .order("matched_at", { ascending: false })
       .limit(30),
     supabase.from("sources").select("id, name").eq("enabled", true).order("name"),
+    // Own favourites (public.favorites, RLS owner-only) — used below to
+    // render each card's heart state. See README.md "Oblíbené".
+    supabase.from("favorites").select("listing_id"),
   ]);
+  const favoriteIds = new Set((favoriteRows ?? []).map((f) => f.listing_id));
 
   const rows = (matches ?? []) as unknown as Array<{
     id: string;
@@ -78,7 +82,7 @@ export default async function DashboardPage() {
                 {r.searches && (
                   <div className="mb-1.5 text-xs font-medium text-gray-400">{r.searches.name}</div>
                 )}
-                <CarCard listing={r.listings!} matchId={r.id} favorite={r.status === "favorite"} />
+                <CarCard listing={r.listings!} matchId={r.id} favorite={favoriteIds.has(r.listings!.id)} />
               </div>
             ))}
         </div>

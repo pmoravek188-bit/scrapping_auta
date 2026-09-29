@@ -38,6 +38,9 @@
  * label/value rows confirmed to always use these exact Czech labels:
  * "Palivo" (fuel), "Převodovka" (transmission), "V provozu od" (year) and
  * "Nájezd" (mileage km).
+ * - images: previously always `[]`. Confirmed live: `.carImage img` has a
+ *   real (non-lazy) `src="/upload/car_sm/<id>/<n>.jpg"` — site-relative,
+ *   made absolute against `BASE_URL`.
  */
 import * as cheerio from "cheerio";
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
@@ -90,6 +93,9 @@ export function parseHavexHtml(html: string): RawListing[] {
 
     const { make, model } = inferMakeModel(header);
 
+    const imgSrc = $el.find(".carImage img").first().attr("src");
+    const imageUrls = imgSrc ? [imgSrc.startsWith("http") ? imgSrc : `${BASE_URL}${imgSrc}`] : [];
+
     out.push({
       sourceId,
       url,
@@ -110,7 +116,7 @@ export function parseHavexHtml(html: string): RawListing[] {
       country: "CZ",
       sellerType: "dealer",
       vin: null,
-      imageUrls: [],
+      imageUrls,
     });
   });
 

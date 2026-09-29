@@ -12,14 +12,34 @@ import {
 import { getAdapter } from "./registry.js";
 import { fetchEurCzkRate } from "./exchange-rate.js";
 import { sendMatchDigestEmail, type NotifySearchGroup } from "./notify/email.js";
-import { MAX_RESULT_PAGES } from "./http.js";
+import { fetchForGoneCheck, MAX_RESULT_PAGES } from "./http.js";
 import { selectListingsToStore } from "./selection.js";
+import { isGone } from "./gone-detection.js";
 
 export type DbClient = SupabaseClient<Database>;
 
-const INACTIVE_AFTER_DAYS = 3;
 const CLEANUP_UNMATCHED_AFTER_DAYS = 3;
 const CLEANUP_BATCH_SIZE = 200;
+/** Per source, per run — keeps a run from spending its whole time budget
+ * re-checking a huge backlog of possibly-gone listings. Any candidate not
+ * checked this run is simply picked up again next run. */
+const MAX_GONE_CHECKS_PER_SOURCE = 50;
+/** A favourited listing confirmed gone from its source is kept (not
+ * deleted) for this long after `gone_at`, so the user gets to see "Prodáno /
+ * nedostupné od <datum>" on the Oblíbené page before it's swept away. A
+ * product default — see README.md "Smazané inzeráty" for how to change it. */
+const GONE_FAVORITE_RETENTION_DAYS = 7;
+/** Circuit breaker for checkGoneListings(): a source's gone-check is only
+ * trusted to delete anything once at least this many candidates were
+ * actually checked this run (below that, a ratio is too noisy to act on). */
+const GONE_CIRCUIT_BREAKER_MIN_CHECKED = 5;
+/** ...and only trusted if the confirmed-gone share stays at or below this
+ * ratio of checked candidates... */
+const GONE_CIRCUIT_BREAKER_RATIO = 0.3;
+/** ...or, regardless of ratio, caps the absolute count in one run — a
+ * source with a huge backlog could clear the ratio bar by having a huge
+ * denominator while still deleting an alarming number of listings. */
+const GONE_CIRCUIT_BREAKER_MAX_ABSOLUTE = 20;
 
 export interface RunOptions {
   dryRun?: boolean;
@@ -171,6 +191,7 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
     let found = 0;
     let newCount = 0;
     let errorText: string | null = null;
+    let goneWarning: string | null = null;
 
     try {
       const overrideQuery = opts.queryOverride ? toOverrideQuery(opts.queryOverride) : null;
@@ -320,6 +341,8 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
           if (newMatch) allNewMatches.push({ searchId: search.id, listingId: upserted.id });
         }
       }
+
+      goneWarning = await checkGoneListings(db, sourceId, new Set(rawById.keys()));
     } catch (err) {
       errorText = (err as Error).message;
       console.error(`[runner] ${sourceId} failed:`, errorText);
@@ -327,19 +350,25 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
 
     if (db) {
       const finishedAt = new Date().toISOString();
+      // A tripped gone-check circuit breaker doesn't stop the scrape itself
+      // from having succeeded (the source was fetched fine, listings were
+      // upserted normally) — but it's still worth surfacing loudly, so it
+      // rides along on the same `errors` column the "Stav zdrojů" page
+      // already reads, and likewise withholds `last_ok_at` for this run.
+      const runErrors = [errorText, goneWarning].filter((m): m is string => Boolean(m)).join("; ") || null;
       await db.from("scrape_runs").insert({
         source: sourceId,
         started_at: startedAt,
         finished_at: finishedAt,
         found,
         new: newCount,
-        errors: errorText,
+        errors: runErrors,
       });
       await db
         .from("sources")
         .update({
           last_run_at: finishedAt,
-          ...(errorText ? {} : { last_ok_at: finishedAt }),
+          ...(runErrors ? {} : { last_ok_at: finishedAt }),
           last_count: found,
         })
         .eq("id", sourceId);
@@ -347,9 +376,6 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
   }
 
   if (db && !dryRun) {
-    const cutoff = new Date(Date.now() - INACTIVE_AFTER_DAYS * 24 * 60 * 60 * 1000).toISOString();
-    await db.from("listings").update({ is_active: false }).lt("last_seen", cutoff).eq("is_active", true);
-
     // Only a full run (all sources) gets to decide a listing is genuinely
     // unmatched — a `--source` run only ever sees a slice of the enabled
     // searches' sources, so it can't tell "not matched by this source's
@@ -358,7 +384,148 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
       await cleanupUnmatchedListings(db);
     }
 
+    await deleteExpiredGoneFavorites(db);
     await notifyNewMatches(db);
+  }
+}
+
+/**
+ * "Is this listing actually gone from its source?" check (see
+ * gone-detection.ts) for one source's run: any of that source's currently
+ * active, not-already-`gone_at` listings that weren't in this run's fetched
+ * results (`fetchedSourceIds`, keyed by the adapter's own `sourceId`) are
+ * candidates. Each candidate's detail URL is fetched (politely throttled,
+ * same as any other request to that host) to confirm before acting:
+ *   - confirmed gone + NOT favorited -> delete (matches/price_history
+ *     cascade, see cleanupUnmatchedListings' doc comment)
+ *   - confirmed gone + favorited     -> is_active=false, gone_at=now();
+ *     deleteExpiredGoneFavorites() sweeps these up after the retention
+ *     window (see GONE_FAVORITE_RETENTION_DAYS)
+ *   - not confirmed (network error, or still looks alive) -> left alone,
+ *     re-checked next run
+ * Capped at MAX_GONE_CHECKS_PER_SOURCE per source per run so a source with a
+ * huge backlog of stale listings can't dominate the run's time budget —
+ * anything past the cap is simply picked up again next run.
+ *
+ * SAFETY: GitHub Actions runners run from US/EU cloud IPs. If a source (or
+ * something in front of it — Seznam's consent wall, a captcha, a geo-block
+ * page) starts redirecting/blocking those IPs broadly, a naive "confirmed
+ * gone" check could read that as the whole catalog having disappeared and
+ * mass-delete it. Two independent guards against that:
+ *   1. `isGone()` itself never confirms gone on a cross-site redirect (see
+ *      gone-detection.ts) — a consent/captcha/geo page on another host is
+ *      always "unknown", not "gone".
+ *   2. A circuit breaker here: if an unusually large share of this run's
+ *      checked candidates come back confirmed-gone, that's itself
+ *      suspicious (a real source doesn't usually lose a third of its
+ *      listings between two runs) — nothing gets deleted/deactivated for
+ *      this source this run, and it's logged loudly and returned so the
+ *      caller can record it on `scrape_runs.errors`.
+ *
+ * Returns a warning message when the circuit breaker tripped, else null.
+ */
+export async function checkGoneListings(
+  db: DbClient,
+  sourceId: string,
+  fetchedSourceIds: Set<string>
+): Promise<string | null> {
+  const { data, error } = await db
+    .from("listings")
+    .select("id, source_id, url")
+    .eq("source", sourceId)
+    .eq("is_active", true)
+    .is("gone_at", null);
+  if (error) {
+    console.warn(`[runner] gone-check: failed to load ${sourceId} listings:`, error.message);
+    return null;
+  }
+
+  const candidates = (data ?? [])
+    .filter((row) => !fetchedSourceIds.has(row.source_id))
+    .slice(0, MAX_GONE_CHECKS_PER_SOURCE);
+
+  let checked = 0;
+  const goneCandidates: (typeof candidates)[number][] = [];
+
+  for (const candidate of candidates) {
+    checked++;
+    let confirmed: boolean;
+    try {
+      const response = await fetchForGoneCheck(candidate.url);
+      confirmed = isGone(sourceId, { ...response, originalUrl: candidate.url });
+    } catch (err) {
+      // Network-level failure (timeout, DNS, ...) — not confirmed, keep it
+      // and retry next run.
+      console.warn(
+        `[runner] gone-check: request failed for ${sourceId}/${candidate.id}, keeping:`,
+        (err as Error).message
+      );
+      continue;
+    }
+    if (confirmed) goneCandidates.push(candidate);
+  }
+
+  const goneCount = goneCandidates.length;
+  const ratio = checked > 0 ? goneCount / checked : 0;
+  const suspicious = checked >= GONE_CIRCUIT_BREAKER_MIN_CHECKED &&
+    (ratio > GONE_CIRCUIT_BREAKER_RATIO || goneCount >= GONE_CIRCUIT_BREAKER_MAX_ABSOLUTE);
+
+  if (suspicious) {
+    const warning = `[gone] ${sourceId}: suspicious gone ratio ${goneCount}/${checked}, skipping deletions`;
+    console.warn(warning);
+    return warning;
+  }
+
+  let deleted = 0;
+  let keptFavorite = 0;
+  for (const candidate of goneCandidates) {
+    const { data: favoriteRows } = await db
+      .from("favorites")
+      .select("user_id")
+      .eq("listing_id", candidate.id)
+      .limit(1);
+
+    if (favoriteRows && favoriteRows.length > 0) {
+      await db
+        .from("listings")
+        .update({ is_active: false, gone_at: new Date().toISOString() })
+        .eq("id", candidate.id);
+      keptFavorite++;
+    } else {
+      await db.from("listings").delete().eq("id", candidate.id);
+      deleted++;
+    }
+  }
+
+  console.log(
+    `[runner] gone-check ${sourceId}: checked ${checked}, gone ${goneCount}, deleted ${deleted}, kept-favourite ${keptFavorite}`
+  );
+  return null;
+}
+
+/**
+ * Deletes a favourited-but-gone listing (`gone_at` set — see
+ * checkGoneListings) once it's been sitting that way for
+ * GONE_FAVORITE_RETENTION_DAYS: the user has had a chance to see "Prodáno /
+ * nedostupné od <datum>" on the Oblíbené page, so it's swept away like any
+ * other gone listing would have been immediately if it hadn't been
+ * favourited. Cascades to `favorites`/`price_history`/`matches` via FK.
+ */
+async function deleteExpiredGoneFavorites(db: DbClient): Promise<void> {
+  const cutoff = new Date(
+    Date.now() - GONE_FAVORITE_RETENTION_DAYS * 24 * 60 * 60 * 1000
+  ).toISOString();
+  const { data, error } = await db
+    .from("listings")
+    .delete()
+    .lt("gone_at", cutoff)
+    .select("id");
+  if (error) {
+    console.warn("[runner] failed to delete expired gone favourites:", error.message);
+    return;
+  }
+  if (data && data.length > 0) {
+    console.log(`[runner] deleted ${data.length} favourited listing(s) gone for ${GONE_FAVORITE_RETENTION_DAYS}+ days`);
   }
 }
 
@@ -367,9 +534,12 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
  * and that haven't been (re-)fetched in a while. The age cutoff exists so a
  * listing that briefly stops matching right after a search is edited isn't
  * lost immediately — it gets a few days' grace before being swept up here.
+ * A favourited listing (row in `public.favorites`) is NEVER deleted here,
+ * matched or not — see README.md "Oblíbené".
  *
- * `price_history`/`matches` rows for a deleted listing cascade-delete via
- * their FK (`on delete cascade`, see supabase/migrations/20260928120000_init.sql),
+ * `price_history`/`matches`/`favorites` rows for a deleted listing
+ * cascade-delete via their FK (`on delete cascade`, see
+ * supabase/migrations/20260928120000_init.sql and 20260928220000_favorites.sql),
  * so deleting from `listings` is sufficient.
  *
  * Paginates with a keyset cursor on `id` (not offset) so deletions made
@@ -385,7 +555,7 @@ async function cleanupUnmatchedListings(db: DbClient): Promise<void> {
   for (;;) {
     let query = db
       .from("listings")
-      .select("id, matches(id)")
+      .select("id, matches(id), favorites(user_id)")
       .lt("last_seen", cutoff)
       .order("id", { ascending: true })
       .limit(CLEANUP_BATCH_SIZE);
@@ -396,11 +566,17 @@ async function cleanupUnmatchedListings(db: DbClient): Promise<void> {
       console.warn("[runner] cleanup: failed to load candidate listings:", error.message);
       break;
     }
-    const rows = (data ?? []) as unknown as Array<{ id: string; matches: { id: string }[] | null }>;
+    const rows = (data ?? []) as unknown as Array<{
+      id: string;
+      matches: { id: string }[] | null;
+      favorites: { user_id: string }[] | null;
+    }>;
     if (rows.length === 0) break;
     cursor = rows[rows.length - 1]!.id;
 
-    const unmatchedIds = rows.filter((r) => !r.matches || r.matches.length === 0).map((r) => r.id);
+    const unmatchedIds = rows
+      .filter((r) => (!r.matches || r.matches.length === 0) && (!r.favorites || r.favorites.length === 0))
+      .map((r) => r.id);
     if (unmatchedIds.length > 0) {
       const { error: deleteError } = await db.from("listings").delete().in("id", unmatchedIds);
       if (deleteError) {

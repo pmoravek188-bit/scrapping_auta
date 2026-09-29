@@ -6,11 +6,18 @@ import clsx from "clsx";
 import { useRouter } from "next/navigation";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
+/**
+ * Toggles a row in `public.favorites` (a real per-user list, not tied to any
+ * saved search — see supabase/migrations/20260928220000_favorites.sql), so
+ * this works on every page that shows a listing (home, both /results
+ * scopes, listing detail), not just the "Moje hledání" scope a `matches`
+ * row used to require.
+ */
 export function FavoriteButton({
-  matchId,
+  listingId,
   initialFavorite,
 }: {
-  matchId: string;
+  listingId: string;
   initialFavorite: boolean;
 }) {
   const router = useRouter();
@@ -24,10 +31,16 @@ export function FavoriteButton({
     if (!supabase || busy) return;
     setBusy(true);
     const next = !favorite;
-    const { error } = await supabase
-      .from("matches")
-      .update({ status: next ? "favorite" : "new" })
-      .eq("id", matchId);
+    let error = null;
+    if (next) {
+      const { data: userData } = await supabase.auth.getUser();
+      const userId = userData.user?.id;
+      if (userId) {
+        ({ error } = await supabase.from("favorites").upsert({ user_id: userId, listing_id: listingId }));
+      }
+    } else {
+      ({ error } = await supabase.from("favorites").delete().eq("listing_id", listingId));
+    }
     setBusy(false);
     if (!error) {
       setFavorite(next);

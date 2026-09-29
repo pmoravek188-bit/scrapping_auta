@@ -4,6 +4,7 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { NotConfigured } from "@/components/not-configured";
 import { PriceHistoryChart } from "@/components/price-history-chart";
 import { ListingGallery } from "@/components/listing-gallery";
+import { FavoriteButton } from "@/components/favorite-button";
 import { formatCzk, formatDateTime, formatKm, FUEL_LABELS, TRANSMISSION_LABELS, BODY_LABELS } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -16,7 +17,7 @@ export default async function ListingDetailPage({ params }: { params: Promise<{ 
   const { data: listing } = await supabase.from("listings").select("*").eq("id", id).maybeSingle();
   if (!listing) notFound();
 
-  const [{ data: priceHistory }, { data: otherOffers }] = await Promise.all([
+  const [{ data: priceHistory }, { data: otherOffers }, { data: favoriteRow }] = await Promise.all([
     supabase
       .from("price_history")
       .select("price_czk, seen_at")
@@ -29,6 +30,9 @@ export default async function ListingDetailPage({ params }: { params: Promise<{ 
           .eq("group_id", listing.group_id)
           .neq("id", id)
       : Promise.resolve({ data: [] }),
+    // RLS restricts this to the signed-in user's own row, so existence alone
+    // tells us whether they've favourited this listing.
+    supabase.from("favorites").select("listing_id").eq("listing_id", id).maybeSingle(),
   ]);
 
   return (
@@ -37,7 +41,10 @@ export default async function ListingDetailPage({ params }: { params: Promise<{ 
         <div className="grid gap-4 sm:grid-cols-2">
           <ListingGallery images={listing.image_urls ?? []} title={listing.title} />
           <div>
-            <span className="badge mb-2 inline-flex bg-gray-100 text-gray-600">{listing.source}</span>
+            <div className="mb-2 flex items-center justify-between gap-2">
+              <span className="badge inline-flex bg-gray-100 text-gray-600">{listing.source}</span>
+              <FavoriteButton listingId={listing.id} initialFavorite={!!favoriteRow} />
+            </div>
             <h1 className="text-lg font-semibold text-gray-900">{listing.title}</h1>
             <div className="mt-2 text-2xl font-bold text-brand-700">{formatCzk(listing.price_czk)}</div>
 

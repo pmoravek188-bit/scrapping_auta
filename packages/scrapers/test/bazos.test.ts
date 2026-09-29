@@ -47,6 +47,7 @@ describe("bazos adapter", () => {
     expect(items[0].location).toBe("Olomouc");
     expect(items[0].fuel).toBe("petrol");
     expect(items[0].transmission).toBe("automatic");
+    expect(items[0].imageUrls).toEqual(["https://www.bazos.cz/img/1t/040/224366040.jpg?t=1"]);
 
     expect(items[1].sourceId).toBe("224359337");
     expect(items[1].price).toBe(189900);

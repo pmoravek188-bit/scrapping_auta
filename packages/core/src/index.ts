@@ -9,4 +9,5 @@ export * from "./fingerprint.js";
 export * from "./matcher.js";
 export * from "./features.js";
 export * from "./text-match.js";
+export * from "./image-url.js";
 export type { Database, Json } from "./database.types.js";

@@ -92,6 +92,7 @@ export interface Database {
           fingerprint: string;
           group_id: string | null;
           created_at: string;
+          gone_at: string | null;
         };
         Insert: Partial<Database["public"]["Tables"]["listings"]["Row"]> & {
           source: string;
@@ -163,6 +164,20 @@ export interface Database {
         };
         Insert: Partial<Database["public"]["Tables"]["user_state"]["Row"]> & { user_id: string };
         Update: Partial<Database["public"]["Tables"]["user_state"]["Row"]>;
+        Relationships: [];
+      };
+      favorites: {
+        Row: {
+          user_id: string;
+          listing_id: string;
+          created_at: string;
+          note: string | null;
+        };
+        Insert: Partial<Database["public"]["Tables"]["favorites"]["Row"]> & {
+          user_id: string;
+          listing_id: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["favorites"]["Row"]>;
         Relationships: [];
       };
     };

@@ -25,6 +25,9 @@
  * exactly two `.car_item__price_block`s per card — "Měsíčně od" (monthly
  * installment, skipped) and "Akční cena" (the actual price, used) —
  * confirmed 1:1 on a live page.
+ * - images: previously always `[]`. Confirmed live: `.car_item__image` has
+ *   a real (non-lazy) `<img src="/files/cars/<id>/950_713_e/<id>-1.jpg?...">`
+ *   — a site-relative URL, made absolute against `BASE_URL`.
  */
 import * as cheerio from "cheerio";
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
@@ -74,6 +77,9 @@ export function parseAutoEsaHtml(html: string): RawListing[] {
 
     const year = /^\d{4}$/.test(yearText) ? Number(yearText) : extractYear(title);
 
+    const imgSrc = $el.find(".car_item__image img").first().attr("src");
+    const imageUrls = imgSrc ? [imgSrc.startsWith("http") ? imgSrc : `${BASE_URL}${imgSrc}`] : [];
+
     out.push({
       sourceId,
       url,
@@ -94,7 +100,7 @@ export function parseAutoEsaHtml(html: string): RawListing[] {
       country: "CZ",
       sellerType: "dealer",
       vin: null,
-      imageUrls: [],
+      imageUrls,
     });
   });
 

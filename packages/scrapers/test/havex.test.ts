@@ -43,6 +43,7 @@ describe("havex adapter", () => {
     expect(items[0].mileageKm).toBe(278610);
     expect(items[0].fuel).toBe("diesel");
     expect(items[0].transmission).toBe("manual");
+    expect(items[0].imageUrls).toEqual(["https://www.havex.cz/upload/car_sm/528453/1.jpg"]);
 
     expect(items[1].sourceId).toBe("528371");
     expect(items[1].make).toBe("volkswagen");

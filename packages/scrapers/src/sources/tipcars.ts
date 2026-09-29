@@ -64,6 +64,13 @@
  *   category segment.
  * - sellerType still isn't derivable from the listing page, so it's left
  *   "unknown" (a valid SELLER_TYPES value) rather than guessed.
+ * - images: the old adapter never extracted any (`imageUrls: []` always).
+ *   Confirmed live: each card has exactly one real `<img>` whose `src`
+ *   already points at TipCars' imgproxy CDN, `g.tipcars.com/.../rs:fit:800:600:...`
+ *   (an already-resized, working 800x600 JPEG URL, not a lazy-load
+ *   placeholder — no `data-src`/`srcset` needed). It's the only `<img>`
+ *   inside the card whose `src` host is `g.tipcars.com` (the other `<img>`s
+ *   in a card are small UI icons served from `www.tipcars.com/build/icons`).
  */
 import * as cheerio from "cheerio";
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
@@ -106,6 +113,14 @@ function splitMakeModelSlug(slug: string): { make: string; model: string | null 
 }
 
 const LISTING_HREF_RE = /^\/([a-z0-9-]+)\/([a-z-]+)\/([a-z-]+)\/[a-z0-9-]+\.html$/;
+
+function safeHost(url: string): string {
+  try {
+    return new URL(url).host;
+  } catch {
+    return "";
+  }
+}
 
 interface TipCarsMeasureData {
   id?: string;
@@ -180,6 +195,12 @@ export function parseTipCarsHtml(html: string): RawListing[] {
       else if (label.startsWith("Výkon")) powerKw = parseCzNumber(value);
     });
 
+    const imageUrls: string[] = [];
+    $el.find("img").each((__, imgEl) => {
+      const src = $(imgEl).attr("src");
+      if (src && /(^|\.)g\.tipcars\.com$/.test(safeHost(src))) imageUrls.push(src);
+    });
+
     const measured = parseMeasureData($el.attr("data-measure-data-value"));
     if (year == null) year = measured?.year ?? null;
     if (mileageKm == null) mileageKm = measured?.mileageKm ?? null;
@@ -223,7 +244,7 @@ export function parseTipCarsHtml(html: string): RawListing[] {
       country: "CZ",
       sellerType: "unknown",
       vin: null,
-      imageUrls: [],
+      imageUrls,
     });
   });
 

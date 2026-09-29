@@ -86,6 +86,10 @@ SQL editor, v pořadí podle názvu souboru):
 
 1. `20260928120000_init.sql` — tabulky, indexy, RLS politiky
 2. `20260928120100_seed_sources.sql` — počáteční seznam zdrojů
+3. … a dál všechny další soubory v `supabase/migrations/` podle názvu
+   (data/čas v názvu = pořadí), včetně `20260928220000_favorites.sql`
+   (tabulka `favorites`, viz „Oblíbené“) a `20260928230000_gone_listings.sql`
+   (sloupec `listings.gone_at`, viz „Smazané inzeráty“)
 
 V Supabase Auth zapněte metodu **Email OTP / Magic Link** (výchozí nastavení)
 a nastavte **Site URL** a **Redirect URLs** na adresu nasazeného webu
@@ -329,12 +333,13 @@ do `listings` (klíč `source`+`source_id`), při změně ceny se jim zapíše
 řádek do `price_history`, spočítá/najde se jim `group_id` podle
 fingerprintu a upsertne `matches`. V `--dry-run` se loguje jak počet
 nalezených, tak počet těch, co by se uložily (viz „Co se ukládá do
-databáze“ níže). Inzeráty neviděné 3+ dny se označí `is_active=false`. Na
-konci celého běhu (ne při `--source`) se navíc smažou inzeráty, které
+databáze“ níže). Po každém zdroji se navíc ověří, jestli inzeráty, které
+tento běh nenašel, opravdu zmizely ze zdroje — viz „Smazané inzeráty“ níže.
+Na konci celého běhu (ne při `--source`) se navíc smažou inzeráty, které
 neodpovídají žádnému hledání a nebyly viděné 3+ dny (`cleanupUnmatchedListings`)
-— `price_history`/`matches` mažou kaskádově. Na úplný závěr pošle
-e-mailový souhrn nových shod (`notified_at is null`) a označí je jako
-odeslané.
+— `price_history`/`matches`/`favorites` mažou kaskádově; oblíbený inzerát se
+takto nikdy nesmaže (viz „Oblíbené“ níže). Na úplný závěr pošle e-mailový
+souhrn nových shod (`notified_at is null`) a označí je jako odeslané.
 
 ### Co se ukládá do databáze
 
@@ -362,6 +367,79 @@ Z toho plynou dvě praktická pravidla:
   Krátká prodleva 3 dnů je záměrná — aby čerstvě stažený inzerát nezmizel
   hned po úpravě hledání, než se stačí spočítat nový rematch.
 
+## Oblíbené
+
+`/favorites` je samostatný, na hledáních nezávislý seznam — tabulka
+`public.favorites` (`supabase/migrations/20260928220000_favorites.sql`,
+`user_id`+`listing_id`, RLS jen vlastník). Srdíčko u karty (komponenta
+`apps/web/components/favorite-button.tsx`) funguje úplně všude — na
+domovské stránce, v obou scope `/results` (i „Všechna auta“, kde předtím
+oblíbení nešlo, protože neexistoval řádek v `matches`), i na detailu
+inzerátu — a přepíná řádek v `favorites`, ne `matches.status`. Stránka
+`/favorites` navíc umí:
+
+- poznámku k inzerátu (`favorites.note`, editace přímo na kartě),
+- změnu ceny od přidání (první záznam v `price_history` od `created_at`
+  dál, porovnaný s aktuální cenou),
+- štítek „Nedostupné / prodáno“, když `listings.is_active = false`,
+- řazení podle data přidání nebo ceny,
+- odebrání z oblíbených.
+
+Stará logika `matches.status = 'favorite'` byla plně nahrazena (migrace ji
+při aplikaci jednorázově přenese do `favorites`); `matches.status = 'hidden'`
+(„Skrýt nabídku“) zůstává beze změny — pořád vyžaduje řádek v `matches`, a
+proto je dostupné jen ve scope „Moje hledání“.
+
+Scraper (`packages/scrapers/src/runner.ts`) nikdy nesmaže oblíbený inzerát
+(`cleanupUnmatchedListings` ho přeskočí i po 3+ dnech bez shody) a i
+smazaný/prodaný oblíbený inzerát se jen deaktivuje, ne smaže rovnou — viz
+„Smazané inzeráty“ níže. Runner jinak dál upsertuje jen inzeráty, které
+aktuálně odpovídají nějakému hledání — oblíbený inzerát, který přestal
+odpovídat všem hledáním, si tedy podrží svůj poslední známý stav (cenu,
+`last_seen`, …), dokud ho zdroj sám nesmaže.
+
+## Smazané inzeráty
+
+Dřívější logika „neviděno 3+ dny → `is_active=false`“ byla nahrazena
+ověřeným mazáním: po každém zdroji (`checkGoneListings` v
+`packages/scrapers/src/runner.ts`) se pro inzeráty daného zdroje, které
+tento běh nenašel, ověří, jestli už opravdu na zdroji neexistují —
+teprve pak se s nimi něco udělá:
+
+1. **Kandidát**: aktivní inzerát daného zdroje (`is_active=true`,
+   `gone_at is null`), který nebyl mezi touto dávkou stažených výsledků. Bere
+   se v potaz jen když se zdroji tento běh podařilo něco stáhnout bez chyby
+   (jinak by "nenašel" mohlo jen znamenat, že zdroj zrovna nejde). Kvůli
+   časovému rozpočtu běhu se na zdroj kontroluje nejvýš 50 kandidátů za běh
+   (`MAX_GONE_CHECKS_PER_SOURCE`) — zbytek se zkusí příští běh.
+2. **Potvrzení**: stáhne se detail inzerátu (`fetchForGoneCheck`, přes
+   stejný zdvořilý/throttlovaný `politeFetch` jako cokoliv jiného) a
+   vyhodnotí se `isGone()` z `packages/scrapers/src/gone-detection.ts` — 404/410,
+   přesměrování pryč z tvaru detailní URL (adaptér-specifické: `sauto`
+   mimo `/osobni/detail/…`, `tipcars` mimo `.html`, `bazos` mimo
+   `/inzerat/…`), nebo 200 stránka s frází typu „inzerát byl smazán/
+   prodán/neexistuje“ (česky/německy/anglicky) — u zdrojů bez vlastního
+   pravidla se použije jen tato obecná fráze/stavová kontrola.
+3. **Potvrzeně pryč a NENÍ v oblíbených** → inzerát se rovnou smaže
+   (`price_history`/`matches`/`favorites` kaskádově).
+4. **Potvrzeně pryč a JE v oblíbených** → inzerát zůstává, jen se nastaví
+   `is_active=false` a `gone_at=now()`; stránka „Oblíbené“ pak u něj ukáže
+   „Prodáno / nedostupné od `<gone_at>`“. Po `GONE_FAVORITE_RETENTION_DAYS`
+   (výchozí **7 dní** — konstanta v `runner.ts`, klidně si ji upravte) se
+   i takový inzerát smaže (`deleteExpiredGoneFavorites`) — uživatel do té
+   doby vidí, že vůz zmizel.
+5. **Nepotvrzeno** (síťová chyba, timeout, nebo stránka pořád vypadá jako
+   živý inzerát) → inzerát se nechá být a zkusí znovu příští běh.
+
+`--dry-run` nikdy nic nemaže ani neoznačuje — celá tahle logika běží jen
+při skutečném zápisu do databáze. Runner loguje za každý zdroj řádek
+`checked / gone / deleted / kept-favourite`.
+
+Heuristiky pro `sauto`/`tipcars`/`bazos` vycházejí z tvaru jejich detailních
+URL (viz komentáře v `gone-detection.ts`), ale nebyly ověřeny živě proti
+skutečně smazanému inzerátu (žádný nebyl po ruce k otestování) — berte je
+jako rozumný odhad, ne jako 100% ověřené chování jako u zbytku adaptérů.
+
 ## Známá omezení / co zbývá
 
 - Všech 10 adaptérů bylo ověřeno proti živému webu 2026-09-28 (viz tabulka
@@ -383,10 +461,11 @@ Z toho plynou dvě praktická pravidla:
   OR-ILIKE prefiltr v SQL + přesný whole-token check v kódu nad vrácenou
   stránkou — u 2+ zaškrtnutých chipů proto `total_count`/počet stránek může
   být jen horní odhad (viz „Omezení textového filtrování“ výše).
-- Skrýt/oblíbit nabídku funguje jen ve scope „Moje hledání“ (potřebuje řádek
-  v `matches`, který v scope „Všechna auta“ neexistuje, dokud se
-  inzerát nestane součástí nějakého uloženého hledání) — v scope „Všechna
-  auta“ se tato tlačítka u karty nezobrazují.
+- Skrýt nabídku funguje jen ve scope „Moje hledání“ (potřebuje řádek v
+  `matches`, který v scope „Všechna auta“ neexistuje, dokud se inzerát
+  nestane součástí nějakého uloženého hledání) — v scope „Všechna auta“ se
+  toto tlačítko u karty nezobrazuje. Oblíbit funguje všude (viz „Oblíbené“
+  výše) — je to samostatná tabulka, ne řádek v `matches`.
 - `new_matches_count` (počítadlo u „Výsledky“ v navigaci) se dotazuje přes
   klientský Supabase klient při každé změně route; u velmi aktivního účtu
   s desítkami hledání by šlo do budoucna nahradit realtime subscription

@@ -4,14 +4,40 @@ import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
 import { useEffect, useState } from "react";
 import clsx from "clsx";
-import { Car, LogOut, Menu, X } from "lucide-react";
+import { Car, Heart, LogOut, Menu, X, type LucideIcon } from "lucide-react";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
 
-const NAV = [
+const NAV: { href: string; label: string; icon?: LucideIcon }[] = [
   { href: "/searches", label: "Hledání" },
   { href: "/results", label: "Výsledky" },
+  { href: "/favorites", label: "Oblíbené", icon: Heart },
   { href: "/sources", label: "Zdroje" },
 ];
+
+/** Count pill on the "Oblíbené" nav item — number of rows in the signed-in
+ * user's public.favorites (RLS owner-only, so a plain count is always just
+ * their own). */
+function useFavoritesCount(): number {
+  const pathname = usePathname();
+  const [count, setCount] = useState(0);
+
+  useEffect(() => {
+    let cancelled = false;
+    const supabase = createSupabaseBrowserClient();
+    if (!supabase) return;
+    supabase
+      .from("favorites")
+      .select("listing_id", { count: "exact", head: true })
+      .then(({ count: c }) => {
+        if (!cancelled && typeof c === "number") setCount(c);
+      });
+    return () => {
+      cancelled = true;
+    };
+  }, [pathname]);
+
+  return count;
+}
 
 /** Task F: count pill on the "Výsledky" nav item — matches created since the
  * user's results_seen_prev watermark, across all of their searches. Fetched
@@ -44,6 +70,7 @@ export function SiteHeader() {
   const [menuOpen, setMenuOpen] = useState(false);
   const [loggingOut, setLoggingOut] = useState(false);
   const newMatchesCount = useNewMatchesCount();
+  const favoritesCount = useFavoritesCount();
 
   async function logout() {
     const supabase = createSupabaseBrowserClient();
@@ -74,10 +101,16 @@ export function SiteHeader() {
                   : "text-gray-600 hover:bg-gray-100 hover:text-gray-900"
               )}
             >
+              {item.icon && <item.icon className="h-3.5 w-3.5" aria-hidden />}
               {item.label}
               {item.href === "/results" && newMatchesCount > 0 && (
                 <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-emerald-500 px-1 text-[11px] font-semibold text-white">
                   {newMatchesCount}
+                </span>
+              )}
+              {item.href === "/favorites" && favoritesCount > 0 && (
+                <span className="inline-flex h-5 min-w-5 items-center justify-center rounded-full bg-red-500 px-1 text-[11px] font-semibold text-white">
+                  {favoritesCount}
                 </span>
               )}
             </Link>

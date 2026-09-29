@@ -128,3 +128,29 @@ export async function fetchText(url: string, opts: FetchOptions = {}): Promise<s
 }
 
 export const MAX_RESULT_PAGES = 5;
+
+export interface GoneCheckResponse {
+  status: number | null;
+  finalUrl: string;
+  html: string;
+}
+
+/**
+ * Fetches a listing's detail URL for the "is this actually gone?" check
+ * (see gone-detection.ts). Unlike {@link fetchText}, this never throws on a
+ * 404/410 (or any other non-2xx status) — those are exactly the responses
+ * the caller needs to inspect — it only throws on a genuine network-level
+ * failure (timeout, DNS, etc), which the caller treats as "not confirmed,
+ * keep the listing".
+ */
+export async function fetchForGoneCheck(url: string, opts: FetchOptions = {}): Promise<GoneCheckResponse> {
+  try {
+    const res = await politeFetch(url, opts);
+    return { status: res.status, finalUrl: res.url, html: await res.text() };
+  } catch (err) {
+    if (err instanceof HttpError) {
+      return { status: err.status, finalUrl: err.url, html: "" };
+    }
+    throw err;
+  }
+}

@@ -35,6 +35,12 @@
  *   list page — they're free text inside the title + description blob
  *   (e.g. "2024 | 102 900 km | MATRIX LED ...") and are extracted with
  *   regexes in `_util-b.ts`.
+ * - images: previously always `[]`. Confirmed live: `.inzeratynadpis`
+ *   (inside `.inzeraty.inzeratyflex`, see the note above about the
+ *   missing closing `</div>`) has a real `<img class="obrazek"
+ *   src="https://www.bazos.cz/img/...">` — already an absolute URL, no
+ *   lazy-load placeholder. A listing with no photo simply has no such
+ *   `<img>`, so `imageUrls` stays `[]` for those.
  */
 import * as cheerio from "cheerio";
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
@@ -136,6 +142,9 @@ export function parseBazosHtml(html: string): RawListing[] {
     const mileageKm = extractMileageKm(fullText);
     if (looksLikeJunkListing(price, year, mileageKm)) return;
 
+    const imgSrc = $el.find("img.obrazek").first().attr("src");
+    const imageUrls = imgSrc ? [imgSrc.startsWith("http") ? imgSrc : `${BASE_URL}${imgSrc}`] : [];
+
     out.push({
       sourceId,
       url,
@@ -156,7 +165,7 @@ export function parseBazosHtml(html: string): RawListing[] {
       country: "CZ",
       sellerType: "private",
       vin: null,
-      imageUrls: [],
+      imageUrls,
     });
   });
 

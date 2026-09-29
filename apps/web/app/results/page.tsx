@@ -142,6 +142,16 @@ export default async function ResultsPage({ searchParams }: { searchParams: Prom
 
   const listingIds = rows.map((r) => r.id);
   const priceDropIds = new Set<string>();
+  const favoriteIds = new Set<string>();
+  if (listingIds.length > 0) {
+    // Own favourites (public.favorites, RLS owner-only) for the listings on
+    // this page — used below to render each card's heart state.
+    const { data: favoriteRows } = await supabase
+      .from("favorites")
+      .select("listing_id")
+      .in("listing_id", listingIds);
+    for (const f of favoriteRows ?? []) favoriteIds.add(f.listing_id);
+  }
   if (listingIds.length > 0) {
     const { data: history } = await supabase
       .from("price_history")
@@ -350,6 +360,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Prom
                       status={r.match_status ?? undefined}
                       listing={listing}
                       offerCount={r.group_offer_count}
+                      favorite={favoriteIds.has(r.id)}
                     />
                   );
                 })}

@@ -38,6 +38,7 @@ describe("autoesa adapter", () => {
     expect(items[0].mileageKm).toBe(161431);
     expect(items[0].powerKw).toBe(200);
     expect(items[0].fuel).toBe("diesel");
+    expect(items[0].imageUrls).toEqual(["https://www.autoesa.cz/files/cars/699459281/1.jpg"]);
 
     expect(items[1].sourceId).toBe("126460941");
     expect(items[1].price).toBe(259900);

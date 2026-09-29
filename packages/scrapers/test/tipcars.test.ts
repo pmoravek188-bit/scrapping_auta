@@ -72,6 +72,9 @@ describe("tipcars adapter", () => {
     expect(items[0].url).toBe(
       "https://www.tipcars.com/skoda-octavia/liftback/benzin/skoda-octavia-1-8tsi-cr-at-bixen-autoac-6611462.html"
     );
+    expect(items[0].imageUrls).toEqual([
+      "https://g.tipcars.com/nJx7prwYfvHcrlcEMQmsQDWuK9pQ_yhRO_z6PXqn5OI/rs:fit:800:600:0:0/sh:0.5/f:jpg/aHR0cHM6Ly9pbWcu.jpg",
+    ]);
 
     expect(items[1]).toMatchObject({
       sourceId: "47710005",

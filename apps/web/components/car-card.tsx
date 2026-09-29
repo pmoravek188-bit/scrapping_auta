@@ -1,10 +1,12 @@
 import Link from "next/link";
-import { Calendar, Gauge, MapPin, ImageOff, TrendingDown, Layers, Sparkles } from "lucide-react";
+import { Calendar, Gauge, MapPin, TrendingDown, Layers, Sparkles } from "lucide-react";
 import clsx from "clsx";
+import { resolveImageUrl } from "@scrapping-auta/core";
 import { formatCzk, formatKm, FUEL_LABELS, TRANSMISSION_LABELS } from "@/lib/format";
 import { FUEL_ICONS } from "@/lib/icons";
 import { FavoriteButton } from "@/components/favorite-button";
 import { HideButton } from "@/components/hide-button";
+import { CarImage } from "@/components/car-image";
 
 export interface CarCardListing {
   id: string;
@@ -27,13 +29,16 @@ export interface CarCardListing {
 
 export function CarCard({
   listing,
-  matchId,
   favorite,
   className,
   onHide,
   hideBusy,
 }: {
   listing: CarCardListing;
+  /** No longer used by CarCard itself (favourites are a standalone
+   * `listing.id`-keyed toggle, see favorite-button.tsx) — kept optional on
+   * this type only so existing callers that still pass it (for `onHide`'s
+   * own `matches` row) don't need updating. */
   matchId?: string;
   favorite?: boolean;
   className?: string;
@@ -45,7 +50,7 @@ export function CarCard({
   onHide?: () => void;
   hideBusy?: boolean;
 }) {
-  const img = listing.image_urls?.[0];
+  const img = resolveImageUrl(listing.image_urls?.[0], "card");
   const FuelIcon = listing.fuel ? FUEL_ICONS[listing.fuel as keyof typeof FUEL_ICONS] : null;
 
   const specs = [
@@ -69,18 +74,11 @@ export function CarCard({
     >
       <Link href={`/listing/${listing.id}`} className="block">
         <div className="relative aspect-[4/3] w-full overflow-hidden bg-gray-100">
-          {img ? (
-            <img
-              src={img}
-              alt={listing.title}
-              loading="lazy"
-              className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
-            />
-          ) : (
-            <div className="flex h-full w-full items-center justify-center text-gray-300">
-              <ImageOff className="h-10 w-10" aria-hidden />
-            </div>
-          )}
+          <CarImage
+            src={img}
+            alt={listing.title}
+            className="h-full w-full object-cover transition duration-300 group-hover:scale-105"
+          />
           {/* Badges: top-left, stacked/wrapped — never overlaps the icon
               buttons (top-right) or the source badge (bottom-left). */}
           <div className="absolute left-2 top-2 flex flex-wrap gap-1">
@@ -120,13 +118,14 @@ export function CarCard({
               as a client-rendered component (results/result-row.tsx), and a
               Server Component's own JSX can never attach a raw DOM event
               handler. FavoriteButton/HideButton are real Client Components
-              that each handle their own preventDefault+stopPropagation. */}
-          {(matchId || onHide) && (
-            <div className="absolute right-2 top-2 flex items-center gap-1.5">
-              {matchId && <FavoriteButton matchId={matchId} initialFavorite={!!favorite} />}
-              {onHide && <HideButton onHide={onHide} busy={hideBusy} />}
-            </div>
-          )}
+              that each handle their own preventDefault+stopPropagation.
+              The heart is a standalone per-user favourites-table toggle
+              (see favorite-button.tsx), so — unlike "Skrýt nabídku", which
+              needs a `matches` row — it's shown on every listing. */}
+          <div className="absolute right-2 top-2 flex items-center gap-1.5">
+            <FavoriteButton listingId={listing.id} initialFavorite={!!favorite} />
+            {onHide && <HideButton onHide={onHide} busy={hideBusy} />}
+          </div>
         </div>
       </Link>
       <div className="p-3">

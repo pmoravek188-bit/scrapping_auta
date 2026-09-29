@@ -14,11 +14,16 @@ export function ResultRow({
   status,
   listing,
   offerCount,
+  favorite,
 }: {
   matchId?: string;
   status?: string;
   listing: CarCardListing;
   offerCount: number;
+  /** From public.favorites, fetched per-page by the caller — see
+   * apps/web/app/results/page.tsx. Independent of `status`/`matchId`, which
+   * are about the (optional) saved-search match, not the favourites list. */
+  favorite: boolean;
 }) {
   const router = useRouter();
   const [busy, setBusy] = useState(false);
@@ -48,7 +53,7 @@ export function ResultRow({
     <CarCard
       listing={{ ...listing, group_offer_count: offerCount }}
       matchId={matchId}
-      favorite={status === "favorite"}
+      favorite={favorite}
       onHide={matchId ? hide : undefined}
       hideBusy={busy}
     />
