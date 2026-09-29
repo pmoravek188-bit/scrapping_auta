@@ -5,6 +5,7 @@ import { NotConfigured } from "@/components/not-configured";
 import { PriceHistoryChart } from "@/components/price-history-chart";
 import { ListingGallery } from "@/components/listing-gallery";
 import { FavoriteButton } from "@/components/favorite-button";
+import { BackButton } from "@/components/back-button";
 import { formatCzk, formatDateTime, formatKm, FUEL_LABELS, TRANSMISSION_LABELS, BODY_LABELS } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -37,6 +38,7 @@ export default async function ListingDetailPage({ params }: { params: Promise<{ 
 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
+      <BackButton />
       <div className="card">
         <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <ListingGallery images={listing.image_urls ?? []} title={listing.title} />
