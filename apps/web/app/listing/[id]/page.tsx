@@ -38,9 +38,9 @@ export default async function ListingDetailPage({ params }: { params: Promise<{ 
   return (
     <div className="mx-auto max-w-4xl space-y-4">
       <div className="card">
-        <div className="grid gap-4 sm:grid-cols-2">
+        <div className="grid grid-cols-1 gap-4 sm:grid-cols-2">
           <ListingGallery images={listing.image_urls ?? []} title={listing.title} />
-          <div>
+          <div className="min-w-0">
             <div className="mb-2 flex items-center justify-between gap-2">
               <span className="badge inline-flex bg-gray-100 text-gray-600">{listing.source}</span>
               <FavoriteButton listingId={listing.id} initialFavorite={!!favoriteRow} />

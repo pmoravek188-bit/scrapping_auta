@@ -10,7 +10,7 @@ export function ListingGallery({ images, title }: { images: string[]; title: str
   const src = resolveImageUrl(images[active], "large");
 
   return (
-    <div>
+    <div className="min-w-0">
       <div className="aspect-[4/3] w-full overflow-hidden rounded-lg bg-gray-100">
         <CarImage src={src} alt={title} className="h-full w-full object-cover" iconClassName="h-12 w-12" />
       </div>
