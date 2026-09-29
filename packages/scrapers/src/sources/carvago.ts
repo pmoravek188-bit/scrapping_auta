@@ -48,7 +48,13 @@
  */
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
 import type { FuelType, TransmissionType } from "@scrapping-auta/core";
-import { bmwSeriesNumber, mercedesClassLetter, normalizeMake, slugifyMakeModel } from "@scrapping-auta/core";
+import {
+  bmwSeriesNumber,
+  isVwVanFamilyModel,
+  mercedesClassLetter,
+  normalizeMake,
+  slugifyMakeModel,
+} from "@scrapping-auta/core";
 import { fetchText, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 
@@ -142,7 +148,14 @@ export function buildCarvagoUrl(query: SearchQuery, page: number): string {
     // omitted and the make filter + client-side `matchesSearch` do the rest.
     const isUnmappableBmwSeries =
       query.model != null && normalizeMake(query.make) === "bmw" && bmwSeriesNumber(query.model) != null;
-    if (query.model && !isUnmappableMercedesClass && !isUnmappableBmwSeries) {
+    // Same story for VW's T4-T7 "Transporter family" vans (Multivan,
+    // Transporter, Caravelle, California): carvago only has per-generation
+    // model slugs ("t6-multivan", ...), confirmed live — a generation-less
+    // `/cs/auta/volkswagen/multivan` 308-redirects to the unfiltered
+    // `/cs/auta/volkswagen` instead of filtering (see `isVwVanFamilyModel`).
+    const isUnmappableVwVan =
+      query.model != null && normalizeMake(query.make) === "volkswagen" && isVwVanFamilyModel(query.model);
+    if (query.model && !isUnmappableMercedesClass && !isUnmappableBmwSeries && !isUnmappableVwVan) {
       path += `/${slugifyMakeModel(query.model)}`;
     }
   }

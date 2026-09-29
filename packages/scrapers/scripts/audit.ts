@@ -20,6 +20,10 @@
  *   pnpm audit:sources -- --source=sauto     # one source only
  *   pnpm audit:sources -- --query=bmw-3-series   # one query only (see QUERIES below)
  *   pnpm audit:sources -- --maxPages=1       # bound each adapter call (default 2)
+ *   pnpm audit:sources -- --make=hyundai --model=i30 --yearFrom=2018
+ *     # ad hoc probe query instead of the QUERIES table — handy for sweeping
+ *     # every make/model in the catalog without hand-writing a NamedQuery for
+ *     # each one. --yearFrom/--source/--maxPages combine with it as usual.
  *
  * Every live network call is bounded: each adapter call is capped at
  * `maxPages` result pages (small by default) and wrapped in a hard 60s
@@ -233,17 +237,37 @@ function parseArgs(argv: string[]) {
   const sourceArg = argv.find((a) => a.startsWith("--source="));
   const queryArg = argv.find((a) => a.startsWith("--query="));
   const maxPagesArg = argv.find((a) => a.startsWith("--maxPages="));
+  const makeArg = argv.find((a) => a.startsWith("--make="));
+  const modelArg = argv.find((a) => a.startsWith("--model="));
+  const yearFromArg = argv.find((a) => a.startsWith("--yearFrom="));
   return {
     source: sourceArg?.split("=")[1],
     query: queryArg?.split("=")[1],
     maxPages: maxPagesArg ? Number(maxPagesArg.split("=")[1]) : 2,
+    make: makeArg?.split("=")[1],
+    model: modelArg?.split("=")[1],
+    yearFrom: yearFromArg ? Number(yearFromArg.split("=")[1]) : undefined,
   };
 }
 
 async function main() {
-  const { source, query, maxPages } = parseArgs(process.argv.slice(2));
+  const { source, query, maxPages, make, model, yearFrom } = parseArgs(process.argv.slice(2));
   const sourceIds = source ? [source] : Object.keys(ADAPTERS);
-  const queries = query ? QUERIES.filter((q) => q.id === query) : QUERIES;
+
+  let queries: NamedQuery[];
+  if (make) {
+    // Ad hoc single probe query (--make/--model), used to sweep the whole
+    // catalog make-by-make without a hand-written NamedQuery for each one.
+    queries = [
+      {
+        id: `adhoc-${make}-${model ?? "any"}`,
+        label: `${make}${model ? ` ${model}` : ""}, loose (ad hoc probe)`,
+        partial: { make, model: model ?? null, yearFrom: yearFrom ?? 2018 },
+      },
+    ];
+  } else {
+    queries = query ? QUERIES.filter((q) => q.id === query) : QUERIES;
+  }
   if (queries.length === 0) {
     console.error(`No query matches id "${query}". Known ids: ${QUERIES.map((q) => q.id).join(", ")}`);
     process.exit(1);

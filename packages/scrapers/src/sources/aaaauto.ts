@@ -41,7 +41,13 @@
  * `model` field for a V-Class car is literally `"V"`, not `"V-Class"`.
  */
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
-import { bmwSeriesNumber, mercedesClassLetter, normalizeMake, slugifyMakeModel } from "@scrapping-auta/core";
+import {
+  bmwSeriesNumber,
+  mercedesClassLetter,
+  normalizeMake,
+  slugifyMakeModel,
+  vwIdModelUrlSlug,
+} from "@scrapping-auta/core";
 import { fetchText, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 import { extractPowerKw } from "./_util-b.js";
@@ -68,7 +74,12 @@ export function buildAaaAutoUrl(query: SearchQuery, page: number): string {
       // own structured listing data, where the ld+json `model` field for a
       // 3-series car is literally "3".
       const bmwDigit = isBmw ? bmwSeriesNumber(query.model) : null;
-      path += `/${letter ?? bmwDigit ?? slugifyMakeModel(query.model)}`;
+      // aaaauto.cz's own model path segment for a VW "ID." model is a
+      // hyphen-less "id4" (confirmed live — see `vwIdModelUrlSlug`'s doc
+      // comment); the hyphenated canonical form 302-redirects to the
+      // unfiltered listing instead of filtering.
+      const vwIdSlug = normalizeMake(query.make) === "volkswagen" ? vwIdModelUrlSlug(query.model) : null;
+      path += `/${letter ?? bmwDigit ?? vwIdSlug ?? slugifyMakeModel(query.model)}`;
     }
   }
   const params = new URLSearchParams();

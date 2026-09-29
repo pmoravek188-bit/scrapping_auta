@@ -60,6 +60,28 @@ describe("aaaauto adapter", () => {
     expect(url).toContain("/ojete-vozy/bmw/x5?");
   });
 
+  it("maps a canonical VW 'ID.' model slug to aaaauto's own hyphen-less model path", () => {
+    // Confirmed live: aaaauto.cz's own model path segment for VW's electric
+    // "ID." range is hyphen-less ("id4") — the hyphenated canonical form
+    // 302-redirects to the unfiltered /ojete-vozy listing instead of
+    // filtering (soft-404).
+    expect(buildAaaAutoUrl({ ...baseQuery, make: "volkswagen", model: "id-4" }, 0)).toContain(
+      "/ojete-vozy/volkswagen/id4?"
+    );
+    expect(buildAaaAutoUrl({ ...baseQuery, make: "volkswagen", model: "id-3" }, 0)).toContain(
+      "/ojete-vozy/volkswagen/id3?"
+    );
+  });
+
+  it("leaves a non-ID VW model slug (including id-buzz) untouched", () => {
+    expect(buildAaaAutoUrl({ ...baseQuery, make: "volkswagen", model: "golf" }, 0)).toContain(
+      "/ojete-vozy/volkswagen/golf?"
+    );
+    expect(buildAaaAutoUrl({ ...baseQuery, make: "volkswagen", model: "id-buzz" }, 0)).toContain(
+      "/ojete-vozy/volkswagen/id-buzz?"
+    );
+  });
+
   it("only applies the confirmed body filter values", () => {
     const suvUrl = buildAaaAutoUrl({ ...baseQuery, body: ["suv"] }, 0);
     expect(suvUrl).toContain("bodyTypeId-array=SUV");

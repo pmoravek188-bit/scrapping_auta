@@ -153,6 +153,53 @@ describe("tipcars adapter pagination", () => {
     expect(results.map((r) => r.sourceId)).toEqual(["1", "2", "3", "4"]);
   });
 
+  it("falls back to the make-only URL when the make-model combo 404s, instead of silently returning nothing", async () => {
+    // Confirmed live: tipcars.com only recognizes a fixed catalog of
+    // "{make}-{model}" slugs — an uncommon model (e.g. "opel-zafira-life")
+    // 404s even though "/ojete/opel" (make-only) is a real page. Previously
+    // this made the adapter give up on the first request and return [],
+    // indistinguishable from "this model genuinely has zero listings".
+    const query = { ...baseQuery, make: "Opel", model: "Zafira Life" };
+    let requestedUrl: string | null = null;
+    vi.doMock("../src/http.js", async () => {
+      const actual = await vi.importActual<typeof import("../src/http.js")>("../src/http.js");
+      return {
+        ...actual,
+        fetchText: vi.fn(async (url: string) => {
+          requestedUrl = url;
+          if (url.includes("opel-zafira-life")) {
+            throw new actual.HttpError("HTTP 404", 404, url);
+          }
+          return makePage(["1", "2"]);
+        }),
+      };
+    });
+
+    const { tipcarsAdapter } = await import("../src/sources/tipcars.js");
+    const results = await tipcarsAdapter.search(query, { eurCzkRate: 24, maxPages: 1 });
+    expect(results.map((r) => r.sourceId)).toEqual(["1", "2"]);
+    expect(requestedUrl).toBe("https://www.tipcars.com/ojete/opel?str=1-20");
+  });
+
+  it("does not retry make-only for an ordinary (non-404) request failure", async () => {
+    vi.doMock("../src/http.js", async () => {
+      const actual = await vi.importActual<typeof import("../src/http.js")>("../src/http.js");
+      return {
+        ...actual,
+        fetchText: vi.fn(async () => {
+          throw new Error("network error");
+        }),
+      };
+    });
+
+    const { tipcarsAdapter } = await import("../src/sources/tipcars.js");
+    const results = await tipcarsAdapter.search(
+      { ...baseQuery, make: "Opel", model: "Zafira Life" },
+      { eurCzkRate: 24, maxPages: 1 }
+    );
+    expect(results).toEqual([]);
+  });
+
   it("stops when a page repeats only already-seen ids instead of continuing forever", async () => {
     const pages = [makePage(["1", "2"]), makePage(["1", "2"]), makePage(["5", "6"])];
     let call = 0;

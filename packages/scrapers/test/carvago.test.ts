@@ -79,6 +79,23 @@ describe("carvago adapter", () => {
     expect(url).toContain("/cs/auta/bmw/320?");
   });
 
+  it("omits the model path segment for a VW T4-T7 van-family model (carvago has no generation-less slug)", () => {
+    // Confirmed live: carvago's model catalog only has per-generation slugs
+    // for these ("t6-multivan", ...) — a generation-less
+    // "/cs/auta/volkswagen/multivan" 308-redirects to the unfiltered
+    // "/cs/auta/volkswagen" instead of filtering.
+    for (const model of ["multivan", "transporter", "caravelle", "california"]) {
+      const url = buildCarvagoUrl({ ...baseQuery, make: "volkswagen", model }, 0);
+      expect(url, model).toContain("/cs/auta/volkswagen?");
+      expect(url, model).not.toContain(model);
+    }
+  });
+
+  it("still builds a model path for a generation-qualified VW van slug", () => {
+    const url = buildCarvagoUrl({ ...baseQuery, make: "volkswagen", model: "multivan-t6" }, 0);
+    expect(url).toContain("/cs/auta/volkswagen/multivan-t6?");
+  });
+
   it("parses listings from the embedded __NEXT_DATA__ JSON", () => {
     const items = parseCarvagoHtml(fixture);
     expect(items).toHaveLength(3);

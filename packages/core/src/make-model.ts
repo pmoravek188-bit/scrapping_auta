@@ -210,6 +210,38 @@ export function bmwSeriesNumber(modelSlug: string | null | undefined): string | 
   return m?.[1] ?? null;
 }
 
+/** If `modelSlug` (as produced by `normalizeModel` for make "volkswagen") is
+ * one of the canonical bare-digit VW "ID." models (id-3, id-4, id-5, ...),
+ * returns aaaauto.cz's own hyphen-less URL model-path spelling for it
+ * ("id3", "id4", ...); otherwise null. Confirmed live: aaaauto.cz's
+ * `/ojete-vozy/volkswagen/id-4` 302-redirects to its unfiltered listing
+ * (soft-404), while `/ojete-vozy/volkswagen/id4` filters correctly. Exported
+ * so aaaauto's adapter can translate our canonical slug back to it, the same
+ * way `mercedesClassLetter`/`bmwSeriesNumber` do for their sources. */
+export function vwIdModelUrlSlug(modelSlug: string | null | undefined): string | null {
+  if (!modelSlug) return null;
+  const m = /^id-([3-7])(?:-|$)/.exec(modelSlug);
+  return m?.[1] ? `id${m[1]}` : null;
+}
+
+/** True if `modelSlug` (as produced by `normalizeModel` for make
+ * "volkswagen") is one of the T4-T7 "Transporter family" van names
+ * (multivan, transporter, caravelle, california) with no generation detail,
+ * i.e. exactly what a loose saved search carries. Exported for adapters that,
+ * like carvago (confirmed live), have no generation-less model slug for
+ * these — carvago's own catalog only has per-generation slugs
+ * ("t6-multivan", "t6-transporter", ...; confirmed live those work), and
+ * `/cs/auta/volkswagen/multivan` (no generation) 308-redirects to the
+ * unfiltered `/cs/auta/volkswagen` listing instead of 404ing or filtering.
+ * Since a saved search only ever carries the generation-less name, such
+ * adapters should omit the model path segment for these (make filter +
+ * client-side `matchesSearch` narrows the rest), same as they already do for
+ * the analogous Mercedes-Benz lettered-class / BMW numbered-series case. */
+export function isVwVanFamilyModel(modelSlug: string | null | undefined): boolean {
+  if (!modelSlug) return false;
+  return VW_VAN_MODEL_WORDS.has(modelSlug);
+}
+
 /** Toyota spells its compact SUV "RAV4" (no space/hyphen before the digit);
  * naive slugifying of a source's "RAV 4" text produces "rav-4", which would
  * never match the catalog's "rav4" slug without this. */
@@ -230,6 +262,54 @@ function applyMazdaModelAlias(slug: string): string {
   return slug;
 }
 
+/** Kia's "Ceed" is stylized "cee'd" (or, live on sauto.cz, with a bare acute
+ * accent character "cee´d" instead of a plain apostrophe) by several
+ * sources — confirmed live: sauto.cz's title text for every Ceed listing is
+ * "Kia Cee´d", which `slugifyMakeModel` (any non-alnum run -> a single
+ * hyphen) turns into "cee-d", not our catalog's plain "ceed". aaaauto.cz and
+ * tipcars.com, by contrast, already spell it "Ceed" with no punctuation —
+ * this rewrite is a no-op for them. */
+function applyKiaModelAlias(slug: string): string {
+  if (slug === "cee-d" || slug.startsWith("cee-d-")) return slug.replace(/^cee-d/, "ceed");
+  return slug;
+}
+
+/** VW electric "ID." range (id-3/id-4/id-5/id-buzz, ...) and the T4-T7
+ * "Transporter family" vans (Multivan/Transporter/Caravelle/California),
+ * tolerating spellings confirmed live across sources:
+ *   - bare, no separator: "id3"/"id4"/"id5" (aaaauto.cz's own URL model-path
+ *     segment for these, confirmed live — the hyphenated "id-4" 302-redirects
+ *     to its unfiltered listing there) and "idbuzz" -> our canonical
+ *     "id-3"/"id-4"/"id-5"/"id-buzz".
+ *   - generation-code-first: "t6-multivan", "t6-1-multivan" (autoscout24.cz's
+ *     structured `vehicle.model` field for a VW Multivan, confirmed live to
+ *     be literally "T6 Multivan"/"T6.1 Multivan", not just "Multivan") ->
+ *     rewritten to `multivan[-<generation>]` so it matches (and is a
+ *     more-specific prefix of) our canonical "multivan". Same for
+ *     transporter/caravelle/california.
+ */
+const VW_VAN_MODEL_WORDS = new Set(["multivan", "transporter", "caravelle", "california"]);
+const VW_VAN_GENERATION_PREFIX = /^t([4-9])(-\d+)?-/;
+
+function applyVolkswagenModelAlias(slug: string): string {
+  // Bare "id3"/"id4"/.../"id7" (no separator) -> "id-3".../"id-7".
+  let m = /^id([3-7])(?:-|$)/.exec(slug);
+  if (m) return slug.replace(/^id[3-7]/, `id-${m[1]}`);
+  // "idbuzz" -> "id-buzz".
+  if (slug === "idbuzz" || slug.startsWith("idbuzz-")) return slug.replace(/^idbuzz/, "id-buzz");
+
+  // Generation-code-first van naming, e.g. "t6-multivan", "t6-1-transporter".
+  m = VW_VAN_GENERATION_PREFIX.exec(slug);
+  if (m) {
+    const generation = m[0].slice(0, -1); // drop the trailing separator hyphen
+    const rest = slug.slice(m[0].length).split("-");
+    if (rest[0] && VW_VAN_MODEL_WORDS.has(rest[0])) {
+      return [rest[0], generation, ...rest.slice(1)].join("-");
+    }
+  }
+  return slug;
+}
+
 /** Per-make model-alias functions, applied after basic slugifying so every
  * real-world spelling sources use converges on one canonical slug per make's
  * model (see each function's doc comment for the spellings it covers). Keyed
@@ -241,6 +321,8 @@ const MODEL_ALIAS_FNS: Record<string, (slug: string) => string> = {
   bmw: applyBmwModelAlias,
   toyota: applyToyotaModelAlias,
   mazda: applyMazdaModelAlias,
+  kia: applyKiaModelAlias,
+  volkswagen: applyVolkswagenModelAlias,
 };
 
 /**

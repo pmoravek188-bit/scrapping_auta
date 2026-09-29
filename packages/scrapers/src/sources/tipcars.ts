@@ -83,7 +83,7 @@ import {
   normalizeMake,
   slugifyMakeModel,
 } from "@scrapping-auta/core";
-import { fetchText, MAX_RESULT_PAGES } from "../http.js";
+import { fetchText, HttpError, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 import { guessFuel, guessTransmission, parseCzNumber } from "./_util-b.js";
 
@@ -96,11 +96,15 @@ const MULTI_WORD_MAKE_SLUGS = Array.from(
   new Set(Object.keys(MAKE_ALIASES).map((k) => slugifyMakeModel(k)).filter((k) => k.includes("-")))
 ).sort((a, b) => b.length - a.length);
 
-export function buildTipCarsUrl(query: SearchQuery, page: number): string {
+export function buildTipCarsUrl(
+  query: SearchQuery,
+  page: number,
+  opts: { makeOnly?: boolean } = {}
+): string {
   let path = "/ojete";
   if (query.make) {
     const makeSlug = slugifyMakeModel(query.make);
-    let modelSlug = query.model ? slugifyMakeModel(query.model) : null;
+    let modelSlug = opts.makeOnly ? null : query.model ? slugifyMakeModel(query.model) : null;
     // tipcars.com's own URL slug for every Mercedes-Benz lettered class is
     // "tridy-<letter>" (Czech genitive "Třídy X"), confirmed live (e.g.
     // `/ojete/mercedes-benz-tridy-v` narrows "Zobrazeno N inzerátů" from 302
@@ -284,12 +288,26 @@ export const tipcarsAdapter: SourceAdapter = {
     const maxPages = ctx.maxPages ?? MAX_RESULT_PAGES;
     const out: RawListing[] = [];
     const seenIds = new Set<string>();
+    // tipcars.com only recognizes a fixed catalog of `{make}-{model}` combo
+    // slugs — an uncommon/rarer model (e.g. "opel-zafira-life", confirmed
+    // live 404) 404s even though `/ojete/opel` (make-only) is a real page.
+    // Rather than silently returning zero results for such a model (the
+    // previous behavior — indistinguishable from "no listings"), fall back
+    // to the make-only URL once and let the client-side matcher narrow by
+    // model from there, same as every source that has no model slug at all.
+    let makeOnly = false;
     for (let page = 0; page < maxPages; page++) {
-      const url = buildTipCarsUrl(query, page);
+      const url = buildTipCarsUrl(query, page, { makeOnly });
       let html: string;
       try {
         html = await fetchText(url);
       } catch (err) {
+        if (page === 0 && !makeOnly && query.model && err instanceof HttpError && err.status === 404) {
+          console.warn(`[tipcars] model-narrowed URL 404'd on page ${page}, retrying make-only:`, url);
+          makeOnly = true;
+          page--;
+          continue;
+        }
         console.warn(`[tipcars] request failed on page ${page}:`, (err as Error).message);
         break;
       }

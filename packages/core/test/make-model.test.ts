@@ -1,5 +1,11 @@
 import { describe, expect, it } from "vitest";
-import { bmwSeriesNumber, normalizeMake, normalizeModel } from "../src/make-model.js";
+import {
+  bmwSeriesNumber,
+  isVwVanFamilyModel,
+  normalizeMake,
+  normalizeModel,
+  vwIdModelUrlSlug,
+} from "../src/make-model.js";
 
 describe("normalizeMake", () => {
   it("maps common aliases to a canonical slug", () => {
@@ -151,5 +157,92 @@ describe("normalizeModel — Mazda bare-number aliasing", () => {
     expect(normalizeModel("3", "mazda")).toBe("mazda3");
     expect(normalizeModel("6", "mazda")).toBe("mazda6");
     expect(normalizeModel("CX-5", "mazda")).toBe("cx-5");
+  });
+});
+
+describe("normalizeModel — Kia Cee'd aliasing", () => {
+  it("canonicalizes every punctuated spelling of Cee'd to the catalog's 'ceed' slug", () => {
+    // Confirmed live: sauto.cz's title text for every Ceed listing is
+    // "Kia Cee´d" (a bare acute-accent character, not a plain apostrophe).
+    expect(normalizeModel("Cee´d", "kia")).toBe("ceed");
+    expect(normalizeModel("Cee'd", "kia")).toBe("ceed");
+    // Already-plain spellings (aaaauto.cz, tipcars.com) are a no-op.
+    expect(normalizeModel("Ceed", "kia")).toBe("ceed");
+    expect(normalizeModel("ceed", "kia")).toBe("ceed");
+  });
+
+  it("preserves a trailing detail suffix", () => {
+    expect(normalizeModel("Cee'd GT", "kia")).toBe("ceed-gt");
+  });
+
+  it("leaves other Kia models unaffected", () => {
+    expect(normalizeModel("Sportage", "kia")).toBe("sportage");
+    expect(normalizeModel("Rio", "kia")).toBe("rio");
+  });
+});
+
+describe("normalizeModel with a Volkswagen make — ID./van-family aliasing", () => {
+  const MAKE = "volkswagen";
+
+  it("canonicalizes a hyphen-less 'ID' electric model to 'id-N'", () => {
+    // Confirmed live: aaaauto.cz's own URL model-path segment for these is
+    // exactly this hyphen-less spelling.
+    expect(normalizeModel("id3", MAKE)).toBe("id-3");
+    expect(normalizeModel("ID4", MAKE)).toBe("id-4");
+    expect(normalizeModel("id5", MAKE)).toBe("id-5");
+    expect(normalizeModel("ID.4", MAKE)).toBe("id-4");
+    expect(normalizeModel("idbuzz", MAKE)).toBe("id-buzz");
+    expect(normalizeModel("ID. Buzz", MAKE)).toBe("id-buzz");
+  });
+
+  it("canonicalizes a generation-code-first van name to the model-first catalog slug", () => {
+    // Confirmed live: autoscout24.cz's structured `vehicle.model` field for a
+    // VW Multivan is literally "T6 Multivan"/"T6.1 Multivan", not "Multivan".
+    expect(normalizeModel("T6 Multivan", MAKE)).toBe("multivan-t6");
+    expect(normalizeModel("T6.1 Multivan", MAKE)).toBe("multivan-t6-1");
+    expect(normalizeModel("T7 Multivan", MAKE)).toBe("multivan-t7");
+    expect(normalizeModel("T6 Transporter", MAKE)).toBe("transporter-t6");
+    expect(normalizeModel("T6 Caravelle", MAKE)).toBe("caravelle-t6");
+    expect(normalizeModel("T6 California", MAKE)).toBe("california-t6");
+  });
+
+  it("leaves an already model-first van name unaffected", () => {
+    expect(normalizeModel("Multivan T6.1", MAKE)).toBe("multivan-t6-1");
+    expect(normalizeModel("Transporter", MAKE)).toBe("transporter");
+  });
+
+  it("leaves ordinary VW models unaffected", () => {
+    expect(normalizeModel("Golf", MAKE)).toBe("golf");
+    expect(normalizeModel("Golf Variant", MAKE)).toBe("golf-variant");
+    expect(normalizeModel("Tiguan Allspace", MAKE)).toBe("tiguan-allspace");
+  });
+});
+
+describe("vwIdModelUrlSlug", () => {
+  it("extracts aaaauto.cz's hyphen-less URL slug from a canonical ID. model", () => {
+    expect(vwIdModelUrlSlug("id-3")).toBe("id3");
+    expect(vwIdModelUrlSlug("id-4")).toBe("id4");
+    expect(vwIdModelUrlSlug("id-5-pro")).toBe("id5");
+  });
+
+  it("returns null for non-ID models", () => {
+    expect(vwIdModelUrlSlug("golf")).toBeNull();
+    expect(vwIdModelUrlSlug("id-buzz")).toBeNull();
+    expect(vwIdModelUrlSlug(null)).toBeNull();
+  });
+});
+
+describe("isVwVanFamilyModel", () => {
+  it("is true for the generation-less T4-T7 van family names", () => {
+    expect(isVwVanFamilyModel("multivan")).toBe(true);
+    expect(isVwVanFamilyModel("transporter")).toBe(true);
+    expect(isVwVanFamilyModel("caravelle")).toBe(true);
+    expect(isVwVanFamilyModel("california")).toBe(true);
+  });
+
+  it("is false for a generation-qualified slug or any other model", () => {
+    expect(isVwVanFamilyModel("multivan-t6")).toBe(false);
+    expect(isVwVanFamilyModel("golf")).toBe(false);
+    expect(isVwVanFamilyModel(null)).toBe(false);
   });
 });
