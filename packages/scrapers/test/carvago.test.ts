@@ -96,6 +96,20 @@ describe("carvago adapter", () => {
     expect(url).toContain("/cs/auta/volkswagen/multivan-t6?");
   });
 
+  it("maps our canonical Audi 'q8-e-tron' to carvago's own unsplit 'e-tron' model path", () => {
+    // Confirmed live: carvago.com has not split "Q8 e-tron" out of "e-tron"
+    // in its own catalog — /cs/auta/audi/q8-e-tron 308-redirects to the
+    // unfiltered /cs/auta/audi listing (its own model.label for every
+    // e-tron/Q8 e-tron car is literally just "e-tron").
+    const url = buildCarvagoUrl({ ...baseQuery, make: "audi", model: "q8-e-tron" }, 0);
+    expect(url).toContain("/cs/auta/audi/e-tron?");
+  });
+
+  it("leaves a plain Audi 'e-tron' model slug untouched", () => {
+    const url = buildCarvagoUrl({ ...baseQuery, make: "audi", model: "e-tron" }, 0);
+    expect(url).toContain("/cs/auta/audi/e-tron?");
+  });
+
   it("parses listings from the embedded __NEXT_DATA__ JSON", () => {
     const items = parseCarvagoHtml(fixture);
     expect(items).toHaveLength(3);

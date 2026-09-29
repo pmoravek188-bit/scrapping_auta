@@ -48,6 +48,28 @@ export const MAKE_ALIASES: Record<string, string> = {
   subaru: "subaru",
   chevrolet: "chevrolet",
   cupra: "cupra",
+  // Commercial / van / pickup specialist makes. These are single words that
+  // `slugifyMakeModel` would already turn into the same slug via
+  // `normalizeMake`'s fallback path, but they still need an explicit entry
+  // here: `isKnownMakeSlug` (used by tipcars to tell a real make apart from a
+  // mis-parsed URL category segment) and `inferMakeModel`'s free-text make
+  // scan (used by bazos/havex) both only recognize makes actually listed in
+  // this table's values, not the slugify fallback.
+  iveco: "iveco",
+  man: "man",
+  isuzu: "isuzu",
+  ssangyong: "ssangyong",
+  "ssang yong": "ssangyong",
+  // SsangYong rebranded to "KG Mobility" (KGM) in 2023-24; some sources may
+  // still spell listings under either name.
+  kgm: "ssangyong",
+  "kg mobility": "ssangyong",
+  "kg-mobility": "ssangyong",
+  maxus: "maxus",
+  ldv: "ldv",
+  piaggio: "piaggio",
+  dodge: "dodge",
+  ram: "ram",
 };
 
 /** All canonical make slugs this app knows about (the alias table's values). */
@@ -310,6 +332,114 @@ function applyVolkswagenModelAlias(slug: string): string {
   return slug;
 }
 
+/** Land Rover's "Range Rover" sub-line has several distinct model names that
+ * sources sometimes spell with the "Range Rover" prefix and sometimes
+ * without, confirmed live (sauto.cz `model_cb.seo_name`, tipcars.com URL
+ * slugs, aaaauto.cz ld+json `model`, autoscout24.cz structured `vehicle.model`
+ * and carvago.com's `model.label` all agree on the exact same spellings):
+ *   - Evoque: every one of those 5 sources' own slug/name is
+ *     "range-rover-evoque" ("Range Rover Evoque"), never bare "evoque" — so
+ *     our canonical catalog slug matches theirs directly and needs no
+ *     adapter-side translation, but a bare "Evoque" (e.g. from a casual
+ *     listing title bazos/havex would free-text-infer) is still folded into
+ *     the same canonical slug here for robustness.
+ *   - Velar: same story, "range-rover-velar" ("Range Rover Velar").
+ *   - Range Rover Sport / Discovery Sport: already spelled consistently as
+ *     "range-rover-sport"/"discovery-sport" everywhere confirmed live — no
+ *     rewrite needed, kept as-is.
+ *   - Bare "Range Rover" (no Sport/Evoque/Velar suffix): confirmed live as
+ *     sauto.cz's own `model_cb.seo_name` for the base model, matches our
+ *     canonical "range-rover" as-is.
+ */
+function applyLandRoverModelAlias(slug: string): string {
+  const tokens = slug.split("-").filter(Boolean);
+  if (tokens[0] === "evoque" || tokens[0] === "velar") {
+    return ["range-rover", ...tokens].join("-");
+  }
+  return slug;
+}
+
+/** Tesla's model line is sometimes reported as a bare letter/digit ("3", "S",
+ * "X", "Y", with no "Model" word at all) rather than our canonical
+ * "model-<n>" — not confirmed live on sauto/tipcars/aaaauto/autoscout24/
+ * carvago (all 5 already use the full "Model 3"/"Model S"/... spelling), but
+ * kept for robustness against a source that does, the same defensive pattern
+ * as `applyMazdaModelAlias`'s bare-number handling. */
+const TESLA_MODEL_LETTERS = new Set(["3", "s", "x", "y"]);
+
+function applyTeslaModelAlias(slug: string): string {
+  const tokens = slug.split("-").filter(Boolean);
+  const [first, ...rest] = tokens;
+  if (!first) return slug;
+  if (tokens.length === 1 && TESLA_MODEL_LETTERS.has(first)) return `model-${first}`;
+  // A hyphen-less "model3"/"models"/"modelx"/"modely".
+  const m = /^model([3sxy])$/.exec(first);
+  if (m) return [`model-${m[1]}`, ...rest].join("-");
+  return slug;
+}
+
+/** Volvo's model names are a letter prefix + a 2-3 digit number (XC60, V60,
+ * S90, C40, ...); a source or free-text title that spells it with a space
+ * ("XC 60") slugifies to "xc-60", which wouldn't match our catalog's
+ * hyphen-less "xc60" without this — not confirmed live as an actual gap on
+ * the 5 structured sources (all already report e.g. "XC60" with no space),
+ * but kept for robustness (free-text titles on bazos/havex, and any future
+ * source) the same way `applyMazdaModelAlias` guards against a spaced-out
+ * bare number. */
+function applyVolvoModelAlias(slug: string): string {
+  const tokens = slug.split("-").filter(Boolean);
+  const [first, second, ...rest] = tokens;
+  if (first && second && /^(xc|v|s|c)$/.test(first) && /^\d{2,3}$/.test(second)) {
+    return [`${first}${second}`, ...rest].join("-");
+  }
+  return slug;
+}
+
+/** Honda's "CR-V"/"HR-V" are hyphenated in our catalog and confirmed live to
+ * be spelled that way by every structured source checked (sauto, aaaauto);
+ * a hyphen-less "CRV"/"HRV" (free-text title, or a source that drops the
+ * hyphen) is folded into the canonical hyphenated slug. */
+function applyHondaModelAlias(slug: string): string {
+  if (slug === "crv" || slug.startsWith("crv-")) return slug.replace(/^crv/, "cr-v");
+  if (slug === "hrv" || slug.startsWith("hrv-")) return slug.replace(/^hrv/, "hr-v");
+  return slug;
+}
+
+/** Mitsubishi's pickup is catalogued as bare "l200" (confirmed live: sauto's
+ * seo_name and aaaauto's ld+json `model` are both "L200", no hyphen) — a
+ * "L 200"/"L-200" spelling folds into that same slug. */
+function applyMitsubishiModelAlias(slug: string): string {
+  if (slug === "l-200" || slug.startsWith("l-200-")) return slug.replace(/^l-200/, "l200");
+  return slug;
+}
+
+/** Suzuki's SX4 is catalogued as bare "sx4" (confirmed live: sauto's
+ * seo_name and aaaauto's own `model` field are both "SX4", no hyphen,
+ * distinct from the newer "SX4 S-Cross"/"sx4-s-cross") — a "SX 4"/"SX-4"
+ * spelling folds into that same slug. */
+function applySuzukiModelAlias(slug: string): string {
+  if (slug === "sx-4" || slug.startsWith("sx-4-")) return slug.replace(/^sx-4/, "sx4");
+  return slug;
+}
+
+/** Audi's "e-tron" SUV was renamed "Q8 e-tron" in its 2023 facelift. Our
+ * canonical catalog keeps them as two distinct models — confirmed live that
+ * sauto.cz, tipcars.com and autoscout24.cz all genuinely catalog "Q8 e-tron"
+ * (`model_cb.seo_name` "q8-e-tron", distinct total count from bare "e-tron")
+ * as its own model — but aaaauto.cz and carvago.com have NOT split their own
+ * catalog: confirmed live that `/ojete-vozy/audi/q8-e-tron` 302-redirects to
+ * aaaauto's unfiltered root listing and `/cs/auta/audi/q8-e-tron`
+ * 308-redirects to carvago's unfiltered `/cs/auta` root, while both sources'
+ * own structured `model`/`model.label` field for EVERY e-tron/Q8 e-tron car
+ * is literally just "e-tron". Exported so those two adapters can translate
+ * our canonical "q8-e-tron" back to their own "e-tron" slug instead of
+ * silently falling through to the unfiltered catalog (same pattern as
+ * `mercedesClassLetter`/`bmwSeriesNumber`/`vwIdModelUrlSlug`). */
+export function audiQ8EtronFallbackSlug(modelSlug: string | null | undefined): string | null {
+  if (!modelSlug) return null;
+  return modelSlug === "q8-e-tron" || modelSlug.startsWith("q8-e-tron-") ? "e-tron" : null;
+}
+
 /** Per-make model-alias functions, applied after basic slugifying so every
  * real-world spelling sources use converges on one canonical slug per make's
  * model (see each function's doc comment for the spellings it covers). Keyed
@@ -323,6 +453,12 @@ const MODEL_ALIAS_FNS: Record<string, (slug: string) => string> = {
   mazda: applyMazdaModelAlias,
   kia: applyKiaModelAlias,
   volkswagen: applyVolkswagenModelAlias,
+  "land-rover": applyLandRoverModelAlias,
+  tesla: applyTeslaModelAlias,
+  volvo: applyVolvoModelAlias,
+  honda: applyHondaModelAlias,
+  mitsubishi: applyMitsubishiModelAlias,
+  suzuki: applySuzukiModelAlias,
 };
 
 /**

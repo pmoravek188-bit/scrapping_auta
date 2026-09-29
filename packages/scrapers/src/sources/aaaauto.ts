@@ -42,13 +42,14 @@
  */
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
 import {
+  audiQ8EtronFallbackSlug,
   bmwSeriesNumber,
   mercedesClassLetter,
   normalizeMake,
   slugifyMakeModel,
   vwIdModelUrlSlug,
 } from "@scrapping-auta/core";
-import { fetchText, MAX_RESULT_PAGES } from "../http.js";
+import { fetchTextWithUrl, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 import { extractPowerKw } from "./_util-b.js";
 
@@ -79,7 +80,11 @@ export function buildAaaAutoUrl(query: SearchQuery, page: number): string {
       // comment); the hyphenated canonical form 302-redirects to the
       // unfiltered listing instead of filtering.
       const vwIdSlug = normalizeMake(query.make) === "volkswagen" ? vwIdModelUrlSlug(query.model) : null;
-      path += `/${letter ?? bmwDigit ?? vwIdSlug ?? slugifyMakeModel(query.model)}`;
+      // aaaauto.cz hasn't split "Q8 e-tron" out of "e-tron" in its own
+      // catalog (see `audiQ8EtronFallbackSlug`'s doc comment) — our
+      // canonical "q8-e-tron" 302-redirects there too.
+      const audiEtronSlug = normalizeMake(query.make) === "audi" ? audiQ8EtronFallbackSlug(query.model) : null;
+      path += `/${letter ?? bmwDigit ?? vwIdSlug ?? audiEtronSlug ?? slugifyMakeModel(query.model)}`;
     }
   }
   const params = new URLSearchParams();
@@ -184,7 +189,22 @@ export const aaaautoAdapter: SourceAdapter = {
       const url = buildAaaAutoUrl(query, page);
       let html: string;
       try {
-        html = await fetchText(url);
+        const fetched = await fetchTextWithUrl(url);
+        // aaaauto.cz redirects ANY make/model path segment it doesn't
+        // recognize all the way back to its bare unfiltered `/ojete-vozy`
+        // root (confirmed live — see `audiQ8EtronFallbackSlug`'s doc comment
+        // and, for a make it simply doesn't stock at all, e.g. RAM/Maxus/
+        // LDV/Piaggio). Every model-specific quirk we know about is already
+        // translated away above before the request is even made; this is a
+        // safety net for the rest (mainly: an unstocked make) — without it,
+        // following the redirect would silently ingest aaaauto's FULL
+        // cross-brand catalog instead of correctly reporting zero results
+        // for this make.
+        if (query.make && new URL(fetched.finalUrl).pathname === "/ojete-vozy" && new URL(url).pathname !== "/ojete-vozy") {
+          console.warn(`[aaaauto] make/model not recognized (redirected to unfiltered listing): ${url}`);
+          break;
+        }
+        html = fetched.html;
       } catch (err) {
         console.warn(`[aaaauto] request failed on page ${page}:`, (err as Error).message);
         break;

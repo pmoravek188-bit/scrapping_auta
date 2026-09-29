@@ -1,6 +1,8 @@
 import { describe, expect, it } from "vitest";
 import {
+  audiQ8EtronFallbackSlug,
   bmwSeriesNumber,
+  isKnownMakeSlug,
   isVwVanFamilyModel,
   normalizeMake,
   normalizeModel,
@@ -18,6 +20,56 @@ describe("normalizeMake", () => {
 
   it("falls back to a slug for unknown makes", () => {
     expect(normalizeMake("SsangYong")).toBe("ssangyong");
+  });
+
+  it("recognizes every commercial/van/pickup make's own spelling", () => {
+    expect(normalizeMake("Iveco")).toBe("iveco");
+    expect(normalizeMake("MAN")).toBe("man");
+    expect(normalizeMake("Isuzu")).toBe("isuzu");
+    expect(normalizeMake("Maxus")).toBe("maxus");
+    expect(normalizeMake("LDV")).toBe("ldv");
+    expect(normalizeMake("Piaggio")).toBe("piaggio");
+    expect(normalizeMake("Dodge")).toBe("dodge");
+    expect(normalizeMake("RAM")).toBe("ram");
+  });
+
+  it("recognizes SsangYong's KGM rebrand spellings", () => {
+    expect(normalizeMake("SsangYong")).toBe("ssangyong");
+    expect(normalizeMake("Ssang Yong")).toBe("ssangyong");
+    expect(normalizeMake("KGM")).toBe("ssangyong");
+    expect(normalizeMake("KG Mobility")).toBe("ssangyong");
+  });
+
+  it("recognizes Land Rover's spelling variants", () => {
+    expect(normalizeMake("Land Rover")).toBe("land-rover");
+    expect(normalizeMake("Land-Rover")).toBe("land-rover");
+    expect(normalizeMake("LandRover")).toBe("land-rover");
+  });
+
+  it("recognizes Alfa Romeo's spelling variants", () => {
+    expect(normalizeMake("Alfa Romeo")).toBe("alfa-romeo");
+    expect(normalizeMake("Alfa-Romeo")).toBe("alfa-romeo");
+    expect(normalizeMake("AlfaRomeo")).toBe("alfa-romeo");
+  });
+
+  it("recognizes Mini and Citroën case/diacritic variants", () => {
+    expect(normalizeMake("MINI")).toBe("mini");
+    expect(normalizeMake("Mini")).toBe("mini");
+    expect(normalizeMake("Citroën")).toBe("citroen");
+    expect(normalizeMake("Citroen")).toBe("citroen");
+  });
+});
+
+describe("isKnownMakeSlug", () => {
+  it("recognizes every commercial/van/pickup make slug (needed by tipcars' URL-segment parser and inferMakeModel's free-text make scan)", () => {
+    for (const slug of ["iveco", "man", "isuzu", "ssangyong", "maxus", "ldv", "piaggio", "dodge", "ram"]) {
+      expect(isKnownMakeSlug(slug), slug).toBe(true);
+    }
+  });
+
+  it("returns false for a slug that isn't a recognized make", () => {
+    expect(isKnownMakeSlug("uzitkove")).toBe(false);
+    expect(isKnownMakeSlug(null)).toBe(false);
   });
 });
 
@@ -244,5 +296,118 @@ describe("isVwVanFamilyModel", () => {
     expect(isVwVanFamilyModel("multivan-t6")).toBe(false);
     expect(isVwVanFamilyModel("golf")).toBe(false);
     expect(isVwVanFamilyModel(null)).toBe(false);
+  });
+});
+
+describe("normalizeModel with a Land Rover make — Range Rover sub-line aliasing", () => {
+  const MAKE = "land-rover";
+
+  it("folds a bare 'Evoque'/'Velar' into the full 'range-rover-<name>' slug", () => {
+    // Confirmed live: sauto.cz, tipcars.com, aaaauto.cz, autoscout24.cz and
+    // carvago.com all spell these "Range Rover Evoque"/"Range Rover Velar"
+    // themselves — a bare "Evoque"/"Velar" is only expected from free-text
+    // title inference, folded here for robustness.
+    expect(normalizeModel("Evoque", MAKE)).toBe("range-rover-evoque");
+    expect(normalizeModel("Velar", MAKE)).toBe("range-rover-velar");
+  });
+
+  it("leaves the already-canonical full names unaffected", () => {
+    expect(normalizeModel("Range Rover Evoque", MAKE)).toBe("range-rover-evoque");
+    expect(normalizeModel("Range Rover Velar", MAKE)).toBe("range-rover-velar");
+    expect(normalizeModel("Range Rover Sport", MAKE)).toBe("range-rover-sport");
+    expect(normalizeModel("Discovery Sport", MAKE)).toBe("discovery-sport");
+    expect(normalizeModel("Range Rover", MAKE)).toBe("range-rover");
+    expect(normalizeModel("Discovery", MAKE)).toBe("discovery");
+    expect(normalizeModel("Defender", MAKE)).toBe("defender");
+  });
+});
+
+describe("normalizeModel with a Tesla make — bare letter/digit aliasing", () => {
+  const MAKE = "tesla";
+
+  it("canonicalizes a bare model letter/digit to 'model-<n>'", () => {
+    expect(normalizeModel("3", MAKE)).toBe("model-3");
+    expect(normalizeModel("S", MAKE)).toBe("model-s");
+    expect(normalizeModel("X", MAKE)).toBe("model-x");
+    expect(normalizeModel("Y", MAKE)).toBe("model-y");
+  });
+
+  it("canonicalizes a hyphen-less 'Model3' spelling", () => {
+    expect(normalizeModel("Model3", MAKE)).toBe("model-3");
+    expect(normalizeModel("ModelY", MAKE)).toBe("model-y");
+  });
+
+  it("leaves the already-canonical 'Model 3' spelling unaffected", () => {
+    expect(normalizeModel("Model 3", MAKE)).toBe("model-3");
+    expect(normalizeModel("Model Y", MAKE)).toBe("model-y");
+  });
+});
+
+describe("normalizeModel with a Volvo make — letter+digit spacing aliasing", () => {
+  const MAKE = "volvo";
+
+  it("canonicalizes a spaced-out letter+digit model to the hyphen-less catalog slug", () => {
+    expect(normalizeModel("XC 60", MAKE)).toBe("xc60");
+    expect(normalizeModel("XC-60", MAKE)).toBe("xc60");
+    expect(normalizeModel("V 60", MAKE)).toBe("v60");
+    expect(normalizeModel("S 90", MAKE)).toBe("s90");
+    expect(normalizeModel("C 40", MAKE)).toBe("c40");
+  });
+
+  it("leaves the already-canonical hyphen-less spelling unaffected", () => {
+    expect(normalizeModel("XC60", MAKE)).toBe("xc60");
+    expect(normalizeModel("XC90", MAKE)).toBe("xc90");
+  });
+});
+
+describe("normalizeModel with a Honda make — CR-V/HR-V hyphen aliasing", () => {
+  const MAKE = "honda";
+
+  it("canonicalizes a hyphen-less 'CRV'/'HRV' to the hyphenated catalog slug", () => {
+    expect(normalizeModel("CRV", MAKE)).toBe("cr-v");
+    expect(normalizeModel("HRV", MAKE)).toBe("hr-v");
+  });
+
+  it("leaves the already-canonical hyphenated spelling unaffected", () => {
+    expect(normalizeModel("CR-V", MAKE)).toBe("cr-v");
+    expect(normalizeModel("Civic", MAKE)).toBe("civic");
+  });
+});
+
+describe("normalizeModel with a Mitsubishi make — L200 hyphen aliasing", () => {
+  const MAKE = "mitsubishi";
+
+  it("canonicalizes a hyphenated 'L-200' to the catalog's bare 'l200' slug", () => {
+    expect(normalizeModel("L-200", MAKE)).toBe("l200");
+  });
+
+  it("leaves the already-canonical bare spelling unaffected", () => {
+    expect(normalizeModel("L200", MAKE)).toBe("l200");
+    expect(normalizeModel("Outlander", MAKE)).toBe("outlander");
+  });
+});
+
+describe("normalizeModel with a Suzuki make — SX4 hyphen aliasing", () => {
+  const MAKE = "suzuki";
+
+  it("canonicalizes a hyphenated 'SX-4' to the catalog's bare 'sx4' slug", () => {
+    expect(normalizeModel("SX-4", MAKE)).toBe("sx4");
+  });
+
+  it("leaves the already-canonical bare spelling, and the distinct SX4 S-Cross, unaffected", () => {
+    expect(normalizeModel("SX4", MAKE)).toBe("sx4");
+    expect(normalizeModel("SX4 S-Cross", MAKE)).toBe("sx4-s-cross");
+  });
+});
+
+describe("audiQ8EtronFallbackSlug", () => {
+  it("maps our canonical 'q8-e-tron' to aaaauto/carvago's own unsplit 'e-tron' slug", () => {
+    expect(audiQ8EtronFallbackSlug("q8-e-tron")).toBe("e-tron");
+  });
+
+  it("returns null for any other model, including plain 'e-tron'", () => {
+    expect(audiQ8EtronFallbackSlug("e-tron")).toBeNull();
+    expect(audiQ8EtronFallbackSlug("a4")).toBeNull();
+    expect(audiQ8EtronFallbackSlug(null)).toBeNull();
   });
 });

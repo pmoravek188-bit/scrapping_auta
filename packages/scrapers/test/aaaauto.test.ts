@@ -82,6 +82,22 @@ describe("aaaauto adapter", () => {
     );
   });
 
+  it("maps our canonical Audi 'q8-e-tron' to aaaauto's own unsplit 'e-tron' model path", () => {
+    // Confirmed live: aaaauto.cz has not split "Q8 e-tron" out of "e-tron" in
+    // its own catalog — /ojete-vozy/audi/q8-e-tron 302-redirects to the
+    // unfiltered listing (its own ld+json `model` field for every e-tron/Q8
+    // e-tron car is literally just "e-tron").
+    expect(buildAaaAutoUrl({ ...baseQuery, make: "audi", model: "q8-e-tron" }, 0)).toContain(
+      "/ojete-vozy/audi/e-tron?"
+    );
+  });
+
+  it("leaves a plain Audi 'e-tron' model slug untouched", () => {
+    expect(buildAaaAutoUrl({ ...baseQuery, make: "audi", model: "e-tron" }, 0)).toContain(
+      "/ojete-vozy/audi/e-tron?"
+    );
+  });
+
   it("only applies the confirmed body filter values", () => {
     const suvUrl = buildAaaAutoUrl({ ...baseQuery, body: ["suv"] }, 0);
     expect(suvUrl).toContain("bodyTypeId-array=SUV");

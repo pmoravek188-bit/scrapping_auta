@@ -127,6 +127,25 @@ export async function fetchText(url: string, opts: FetchOptions = {}): Promise<s
   return res.text();
 }
 
+export interface FetchedText {
+  html: string;
+  /** The response's final URL after following any redirects (same as the
+   * requested URL when there was no redirect). Some sources (aaaauto.cz,
+   * carvago.com) silently 302/308-redirect a make/model path segment they
+   * don't recognize back to their own unfiltered listing root instead of
+   * 404ing — following that redirect and parsing the page would otherwise
+   * look just like a normal (but huge, cross-brand) result set. Callers that
+   * need to detect this compare `finalUrl` against the URL they requested. */
+  finalUrl: string;
+}
+
+/** Like {@link fetchText}, but also returns the response's final URL after
+ * redirects — see {@link FetchedText}. */
+export async function fetchTextWithUrl(url: string, opts: FetchOptions = {}): Promise<FetchedText> {
+  const res = await politeFetch(url, opts);
+  return { html: await res.text(), finalUrl: res.url };
+}
+
 export const MAX_RESULT_PAGES = 5;
 
 export interface GoneCheckResponse {

@@ -49,13 +49,14 @@
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
 import type { FuelType, TransmissionType } from "@scrapping-auta/core";
 import {
+  audiQ8EtronFallbackSlug,
   bmwSeriesNumber,
   isVwVanFamilyModel,
   mercedesClassLetter,
   normalizeMake,
   slugifyMakeModel,
 } from "@scrapping-auta/core";
-import { fetchText, MAX_RESULT_PAGES } from "../http.js";
+import { fetchTextWithUrl, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 
 const BASE_URL = "https://carvago.com";
@@ -155,8 +156,14 @@ export function buildCarvagoUrl(query: SearchQuery, page: number): string {
     // `/cs/auta/volkswagen` instead of filtering (see `isVwVanFamilyModel`).
     const isUnmappableVwVan =
       query.model != null && normalizeMake(query.make) === "volkswagen" && isVwVanFamilyModel(query.model);
+    // carvago.com hasn't split "Q8 e-tron" out of "e-tron" in its own
+    // catalog either (see `audiQ8EtronFallbackSlug`'s doc comment) — our
+    // canonical "q8-e-tron" 308-redirects to the unfiltered `/cs/auta/audi`
+    // there too, so translate it back to carvago's own "e-tron" slug.
+    const audiEtronSlug =
+      query.model != null && normalizeMake(query.make) === "audi" ? audiQ8EtronFallbackSlug(query.model) : null;
     if (query.model && !isUnmappableMercedesClass && !isUnmappableBmwSeries && !isUnmappableVwVan) {
-      path += `/${slugifyMakeModel(query.model)}`;
+      path += `/${audiEtronSlug ?? slugifyMakeModel(query.model)}`;
     }
   }
   const params = new URLSearchParams();
@@ -285,11 +292,30 @@ export const carvagoAdapter: SourceAdapter = {
   async search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]> {
     const maxPages = ctx.maxPages ?? MAX_RESULT_PAGES;
     const out: RawListing[] = [];
+    const requestedMakeSlug = query.make ? slugifyMakeModel(query.make) : null;
     for (let page = 0; page < maxPages; page++) {
       const url = buildCarvagoUrl(query, page);
       let html: string;
       try {
-        html = await fetchText(url);
+        const fetched = await fetchTextWithUrl(url);
+        // carvago.com 308-redirects a make it doesn't stock at all straight
+        // to its unfiltered `/cs/auta` root (confirmed live for e.g. MAN/
+        // LDV/Piaggio) — distinct from the EXPECTED "model segment dropped,
+        // make kept" redirect the Mercedes/BMW/VW-van cases above already
+        // avoid triggering by omitting the model segment themselves (that
+        // one lands on `/cs/auta/<make>`, still make-filtered). Only the
+        // former — the make itself missing from the final path — means
+        // carvago doesn't recognize this make; following it would otherwise
+        // silently ingest carvago's FULL cross-brand catalog.
+        if (requestedMakeSlug) {
+          const finalSegments = new URL(fetched.finalUrl).pathname.split("/").filter(Boolean);
+          const finalMakeSlug = finalSegments[1] === "auta" ? finalSegments[2] : undefined;
+          if (finalMakeSlug !== requestedMakeSlug) {
+            console.warn(`[carvago] make not recognized (redirected to unfiltered listing): ${url}`);
+            break;
+          }
+        }
+        html = fetched.html;
       } catch (err) {
         console.warn(`[carvago] request failed on page ${page}:`, (err as Error).message);
         break;

@@ -185,6 +185,8 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
     ["q5", "Q5"],
     ["q7", "Q7"],
     ["q8", "Q8"],
+    ["e-tron", "e-tron"],
+    ["q8-e-tron", "Q8 e-tron"],
   ]),
   ford: models("ford", [
     ["fiesta", "Fiesta"],
@@ -373,7 +375,11 @@ export const POPULAR_MODELS: Record<string, ModelOption[]> = {
   ]),
   "land-rover": models("land-rover", [
     ["discovery", "Discovery"],
+    ["discovery-sport", "Discovery Sport"],
     ["range-rover", "Range Rover"],
+    ["range-rover-sport", "Range Rover Sport"],
+    ["range-rover-evoque", "Range Rover Evoque"],
+    ["range-rover-velar", "Range Rover Velar"],
     ["defender", "Defender"],
   ]),
   porsche: models("porsche", [
