@@ -65,6 +65,18 @@ export const ListingSchema = z.object({
   fingerprint: z.string(),
   drive: z.enum(DRIVE_TYPES).nullable(),
   equipment: z.array(z.string()),
+  /** Feature-group ids (see core/src/features.ts) confirmed present on this
+   * listing's DETAIL page (description/equipment/wheelbase text), as opposed
+   * to `equipment` (free text from the list page only). Populated by the
+   * scraper runner's near-match detail-enrichment pass (see
+   * packages/scrapers/src/runner.ts and the `detail_text_cache` table) for
+   * listings that fail matching ONLY on a feature the source's list page
+   * doesn't expose (e.g. "prodloužená verze"/long-wheelbase, often only
+   * mentioned in the description). `hasAllFeatures` treats an id present
+   * here as satisfied without re-scanning free text — see features.ts.
+   * Empty for every listing the enrichment pass never looked at (the
+   * overwhelming majority), never re-derived client-side. */
+  detailFeatures: z.array(z.string()).optional().default([]),
 });
 export type Listing = z.infer<typeof ListingSchema>;
 

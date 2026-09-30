@@ -120,9 +120,59 @@ export const VERSION_GROUPS: FeatureGroup[] = [
       "XL",
       "maxi",
       "Langversion",
+      // Added for detail-page description/equipment text (see
+      // scrapers/runner.ts's near-match enrichment pass): common Czech/German
+      // wordings for a long wheelbase found live in listing descriptions,
+      // beyond the model-name-style synonyms above. Multi-word synonyms match
+      // as a contiguous token sequence (see includesPhrase) — never a
+      // standalone "rozvor"/"radstand" alone, since a wheelbase is mentioned
+      // on plenty of listings that are NOT the long version.
+      "dlouhý rozvor",
+      "dlouhým rozvorem",
+      "prodloužený rozvor",
+      "prodlouženým rozvorem",
+      "radstand lang",
+      "long wheelbase",
     ],
   },
 ];
+
+/** A length mentioned in listing text at or above this (in mm) is treated as
+ * the long-wheelbase/extended-body version for the "prodlouzena" group —
+ * e.g. a VW T6/T7 Multivan/Transporter's long body is ~5300mm vs ~4900-5150mm
+ * standard/short. Deliberately conservative (only used as a fallback when no
+ * textual synonym matched) and bounded above by a sane passenger-vehicle
+ * length so a stray unrelated number (e.g. a cargo volume in liters) can't be
+ * misread as a length. */
+const PRODLOUZENA_LENGTH_THRESHOLD_MM = 5200;
+const MAX_SANE_VEHICLE_LENGTH_MM = 7000;
+
+const LENGTH_MM_RE = /(\d{4,5})\s*mm\b/gi;
+/** "5,30 m" / "5.30 m" (never "mm", handled above) — a bare decimal meters
+ * figure, as sometimes given for overall vehicle length. */
+const LENGTH_M_RE = /(\d[.,]\d{1,2})\s*m\b(?!m)/gi;
+
+/** True if free text mentions a vehicle length/wheelbase at or above the
+ * long-wheelbase threshold (see `PRODLOUZENA_LENGTH_THRESHOLD_MM`). Used as a
+ * structured-data fallback for the "prodlouzena" (Verze/wheelbase) feature
+ * group when no textual synonym matched — see `groupMatches` below. */
+export function detectLengthBasedProdlouzena(text: string | null | undefined): boolean {
+  if (!text) return false;
+  for (const m of text.matchAll(LENGTH_MM_RE)) {
+    const mm = Number(m[1]);
+    if (mm >= PRODLOUZENA_LENGTH_THRESHOLD_MM && mm <= MAX_SANE_VEHICLE_LENGTH_MM) return true;
+  }
+  for (const m of text.matchAll(LENGTH_M_RE)) {
+    const meters = Number((m[1] ?? "").replace(",", "."));
+    if (
+      meters >= PRODLOUZENA_LENGTH_THRESHOLD_MM / 1000 &&
+      meters <= MAX_SANE_VEHICLE_LENGTH_MM / 1000
+    ) {
+      return true;
+    }
+  }
+  return false;
+}
 
 /** Every taggable group (equipment + version), keyed by id — used to resolve
  * a `SearchQuery.features` id to its synonym list regardless of which UI
@@ -131,9 +181,13 @@ export const ALL_FEATURE_GROUPS: FeatureGroup[] = [...FEATURE_GROUPS, ...VERSION
 const FEATURE_GROUP_BY_ID = new Map(ALL_FEATURE_GROUPS.map((g) => [g.id, g]));
 
 /** True if `haystack` contains any of `group`'s synonyms, matched as whole
- * tokens (see module doc — never a substring of a longer token). */
+ * tokens (see module doc — never a substring of a longer token), OR (for the
+ * "prodlouzena" group only) a structured length/wheelbase figure at or above
+ * the long-wheelbase threshold (see `detectLengthBasedProdlouzena`). */
 function groupMatches(haystack: string, group: FeatureGroup): boolean {
-  return group.synonyms.some((syn) => includesPhrase(haystack, syn));
+  if (group.synonyms.some((syn) => includesPhrase(haystack, syn))) return true;
+  if (group.id === "prodlouzena" && detectLengthBasedProdlouzena(haystack)) return true;
+  return false;
 }
 
 /**
@@ -146,11 +200,28 @@ export function detectFeatures(text: string | null | undefined): string[] {
   return ALL_FEATURE_GROUPS.filter((g) => groupMatches(text, g)).map((g) => g.id);
 }
 
-/** True if `text` contains every one of the requested feature ids. */
-export function hasAllFeatures(text: string | null | undefined, featureIds: string[]): boolean {
+/**
+ * True if `text` (or `confirmedIds`) accounts for every one of the requested
+ * feature ids.
+ *
+ * `confirmedIds` (optional) lets a caller short-circuit the free-text scan
+ * for a feature id it already knows is present by other means — currently
+ * used for `Listing.detailFeatures`, populated by the scraper runner's
+ * detail-page enrichment pass (packages/scrapers/src/runner.ts) for listings
+ * whose LIST-page text (`text` here) doesn't mention a feature that's only
+ * stated on the detail page. A confirmed id is treated as satisfied
+ * regardless of what `text` says (or even when `text` is empty).
+ */
+export function hasAllFeatures(
+  text: string | null | undefined,
+  featureIds: string[],
+  confirmedIds?: string[] | null
+): boolean {
   if (featureIds.length === 0) return true;
-  if (!text) return false;
+  const confirmed = confirmedIds && confirmedIds.length > 0 ? new Set(confirmedIds) : null;
   return featureIds.every((id) => {
+    if (confirmed?.has(id)) return true;
+    if (!text) return false;
     const group = FEATURE_GROUP_BY_ID.get(id);
     return group ? groupMatches(text, group) : false;
   });

@@ -82,14 +82,53 @@
  * is `rada-x-vse` ("Řada X", a different Czech word than "Třída" for the
  * other classes). See `MERCEDES_CLASS_SLUG_MAP` below.
  */
-import type { RawListing, SearchQuery } from "@scrapping-auta/core";
+import type { FuelType, RawListing, SearchQuery, TransmissionType } from "@scrapping-auta/core";
 import { mercedesClassLetter, normalizeMake, slugifyMakeModel } from "@scrapping-auta/core";
-import { fetchText, MAX_RESULT_PAGES } from "../http.js";
+import { fetchText } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 import { guessFuel, guessTransmission } from "./_util-b.js";
 
 const BASE_URL = "https://www.autoscout24.cz";
 const PAGE_SIZE = 20;
+/**
+ * Default page cap for THIS adapter when the caller doesn't explicitly pass
+ * `ctx.maxPages` (an explicit value, e.g. from scripts/audit.ts's
+ * `--maxPages`, is always honored as-is — this only raises the adapter's own
+ * fallback). Confirmed live 2026-09-30: a narrowed make/model+filter query
+ * (e.g. VW Multivan diesel/automatic) routinely has 100-800+ results on the
+ * `cy=D` (Germany-only) inventory, so the previous fallback of
+ * `MAX_RESULT_PAGES` (5 pages * 20 = 100) was silently capping well short of
+ * what a narrow saved search could actually match. 15 pages * 20 = 300 is a
+ * sane upper bound — see packages/scrapers/src/runner.ts, which passes this
+ * adapter a higher `maxPages` than the shared default for the same reason. */
+export const AUTOSCOUT24_DEFAULT_MAX_PAGES = 15;
+
+/** SearchQuery FuelType -> autoscout24.cz's own `fuel` query value. Confirmed
+ * live via `numberOfResults` narrowing on `/lst/volkswagen/multivan?cy=D`:
+ * D=Diesel (5079/6676), B=Benzín/petrol (464/6676), E=Elektro (2/6676),
+ * L=LPG (4/6676), 2=plug-in hybrid ("Elektro/Benzín", confirmed by sampling
+ * `vehicle.fuel`/`modelVersionInput` text on `fuel=2` results — every one was
+ * an eHybrid). Plain (non-plug-in) `hybrid` and `cng` have no confirmed
+ * working code (`fuel=H`/`fuel=C` both returned 0 — inconclusive rather than
+ * confirmed-absent, since this fleet may simply have none — left unmapped
+ * rather than guessed) and `other` has no meaningful code either; all three
+ * are omitted and left to the client-side matcher. */
+const FUEL_QUERY_MAP: Partial<Record<FuelType, string>> = {
+  diesel: "D",
+  petrol: "B",
+  electric: "E",
+  lpg: "L",
+  plugin_hybrid: "2",
+};
+
+/** SearchQuery TransmissionType -> autoscout24.cz's own `gear` query value.
+ * Confirmed live: `gear=A` (5689/6676) + `gear=M` (981/6676) on the same
+ * unfiltered-fuel Multivan query above, summing sensibly short of the total
+ * (the remainder being listings with no stated transmission). */
+const GEAR_QUERY_MAP: Record<TransmissionType, string> = {
+  automatic: "A",
+  manual: "M",
+};
 
 /** Our canonical Mercedes-Benz class letter -> autoscout24.cz's own
  * whole-class model path segment. Confirmed live — see file header. */
@@ -188,6 +227,15 @@ export function buildAutoScout24Url(
   if (query.yearFrom) params.set("fregfrom", String(query.yearFrom));
   if (query.yearTo) params.set("fregto", String(query.yearTo));
   if (query.mileageMax) params.set("kmto", String(query.mileageMax));
+  if (query.powerMinKw) params.set("powerfrom", String(query.powerMinKw));
+  const fuelFilter = query.fuel[0];
+  if (query.fuel.length === 1 && fuelFilter) {
+    const code = FUEL_QUERY_MAP[fuelFilter];
+    if (code) params.set("fuel", code);
+  }
+  if (query.transmission) {
+    params.set("gear", GEAR_QUERY_MAP[query.transmission]);
+  }
   return `${BASE_URL}${path}?${params.toString()}`;
 }
 
@@ -277,11 +325,76 @@ export function parseAutoScout24Html(html: string): RawListing[] {
   return out;
 }
 
+interface As24EquipmentEntry {
+  id?: string | null;
+}
+interface As24DetailVehicle {
+  modelVersionInput?: string | null;
+  equipment?: Record<string, As24EquipmentEntry[] | undefined> | null;
+}
+interface As24ListingDetails {
+  description?: string | null;
+  vehicle?: As24DetailVehicle | null;
+}
+interface As24DetailNextData {
+  props?: {
+    pageProps?: {
+      listingDetails?: As24ListingDetails;
+    };
+  };
+}
+
+/** Strips HTML tags from AS24's `description` field (it's stored as raw
+ * HTML — `<strong>`/`<br />`/... — on the live site, confirmed 2026-09-30). */
+function stripHtml(html: string): string {
+  return html
+    .replace(/<br\s*\/?>/gi, " ")
+    .replace(/<[^>]+>/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+/** Parses a detail page's `__NEXT_DATA__` into one free-text blob:
+ * modelVersionInput + description (HTML stripped) + every equipment item
+ * label across all categories. Exported for unit testing without a live
+ * call. */
+export function parseAutoScout24DetailText(html: string): string | null {
+  const m = /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/.exec(html);
+  if (!m?.[1]) return null;
+  let data: As24DetailNextData;
+  try {
+    data = JSON.parse(m[1]) as As24DetailNextData;
+  } catch {
+    return null;
+  }
+  const details = data.props?.pageProps?.listingDetails;
+  if (!details) return null;
+  const equipmentItems = Object.values(details.vehicle?.equipment ?? {})
+    .flatMap((items) => items ?? [])
+    .map((e) => e.id)
+    .filter((id): id is string => Boolean(id));
+  const parts = [
+    details.vehicle?.modelVersionInput,
+    details.description ? stripHtml(details.description) : null,
+    ...equipmentItems,
+  ].filter((p): p is string => Boolean(p));
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
 export const autoscout24Adapter: SourceAdapter = {
   id: "autoscout24",
   verified: true,
+  async fetchDetailText(listing: { url: string; sourceId: string }): Promise<string | null> {
+    try {
+      const html = await fetchText(listing.url);
+      return parseAutoScout24DetailText(html);
+    } catch (err) {
+      console.warn(`[autoscout24] fetchDetailText failed for ${listing.sourceId}:`, (err as Error).message);
+      return null;
+    }
+  },
   async search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]> {
-    const maxPages = ctx.maxPages ?? MAX_RESULT_PAGES;
+    const maxPages = ctx.maxPages ?? AUTOSCOUT24_DEFAULT_MAX_PAGES;
     const out: RawListing[] = [];
     for (let page = 0; page < maxPages; page++) {
       const url = buildAutoScout24Url(query, page, ctx.eurCzkRate);

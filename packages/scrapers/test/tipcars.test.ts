@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it, vi, beforeEach } from "vitest";
-import { buildTipCarsUrl, parseTipCarsHtml } from "../src/sources/tipcars.js";
+import { buildTipCarsUrl, parseTipCarsDetailText, parseTipCarsHtml } from "../src/sources/tipcars.js";
 import type { SearchQuery } from "@scrapping-auta/core";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/tipcars-search.html", import.meta.url));
@@ -216,5 +216,26 @@ describe("tipcars adapter pagination", () => {
     // stopped after the repeat page — page 3's "5"/"6" must never be fetched
     expect(results.map((r) => r.sourceId)).toEqual(["1", "2"]);
     expect(call).toBe(2);
+  });
+});
+
+describe("parseTipCarsDetailText", () => {
+  it("joins every '.detail-box__long-text' block's text (seller description + notes)", () => {
+    const html = `
+      <html><body>
+        <div class="detail-box__long-text">Sleva 20.000 Kč při financování.</div>
+        <div class="detail-box__long-text text--first-upper">
+          Multivan s dlouhým rozvorem, navigace, tažné zařízení.
+        </div>
+        <div class="detail-box__long-text">servisní knížka, platná STK.</div>
+      </body></html>`;
+    const text = parseTipCarsDetailText(html);
+    expect(text).toContain("dlouhým rozvorem");
+    expect(text).toContain("tažné zařízení");
+    expect(text).toContain("servisní knížka");
+  });
+
+  it("returns null when the page has no long-text blocks", () => {
+    expect(parseTipCarsDetailText("<html><body><p>nothing here</p></body></html>")).toBeNull();
   });
 });

@@ -224,9 +224,48 @@ export function parseSautoResponse(json: unknown): RawListing[] {
   return out;
 }
 
+const DETAIL_ENDPOINT = "https://www.sauto.cz/api/v1/items";
+
+interface SautoEquipmentItem {
+  name?: string | null;
+}
+interface SautoDetailResult {
+  description?: string | null;
+  equipment_cb?: SautoEquipmentItem[] | null;
+  additional_model_name?: string | null;
+}
+interface SautoDetailResponse {
+  result?: SautoDetailResult;
+}
+
+/** Parses the detail-endpoint JSON (see `sautoAdapter.fetchDetailText`) into
+ * one free-text blob: description + equipment names + the free-text
+ * variant/trim string (which often carries "Long"/"L2" wording the
+ * structured fields don't). Exported for unit testing without a live call. */
+export function parseSautoDetailText(json: unknown): string | null {
+  const result = (json as SautoDetailResponse | undefined)?.result;
+  if (!result) return null;
+  const equipmentNames = (result.equipment_cb ?? [])
+    .map((e) => e.name)
+    .filter((n): n is string => Boolean(n));
+  const parts = [result.additional_model_name, result.description, ...equipmentNames].filter(
+    (p): p is string => Boolean(p)
+  );
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
 export const sautoAdapter: SourceAdapter = {
   id: "sauto",
   verified: true,
+  async fetchDetailText(listing: { url: string; sourceId: string }): Promise<string | null> {
+    try {
+      const json = await fetchJson(`${DETAIL_ENDPOINT}/${encodeURIComponent(listing.sourceId)}`);
+      return parseSautoDetailText(json);
+    } catch (err) {
+      console.warn(`[sauto] fetchDetailText failed for ${listing.sourceId}:`, (err as Error).message);
+      return null;
+    }
+  },
   async search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]> {
     const maxPages = ctx.maxPages ?? MAX_RESULT_PAGES;
     const out: RawListing[] = [];

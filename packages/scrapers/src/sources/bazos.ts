@@ -182,9 +182,28 @@ export function parseBazosHtml(html: string): RawListing[] {
   return out;
 }
 
+/** Parses a Bazoš listing detail page's full description — confirmed live:
+ * `.popisdetail` holds the complete seller text (the list page's `.popis`
+ * snippet can be truncated). Exported for unit testing without a live
+ * call. */
+export function parseBazosDetailText(html: string): string | null {
+  const $ = cheerio.load(html);
+  const text = $(".popisdetail").first().text().trim();
+  return text || null;
+}
+
 export const bazosAdapter: SourceAdapter = {
   id: "bazos",
   verified: true,
+  async fetchDetailText(listing: { url: string; sourceId: string }): Promise<string | null> {
+    try {
+      const html = await fetchText(listing.url);
+      return parseBazosDetailText(html);
+    } catch (err) {
+      console.warn(`[bazos] fetchDetailText failed for ${listing.sourceId}:`, (err as Error).message);
+      return null;
+    }
+  },
   async search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]> {
     const maxPages = ctx.maxPages ?? MAX_RESULT_PAGES;
     const out: RawListing[] = [];

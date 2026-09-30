@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { parseSkodaPlusEdges } from "../src/sources/skodaplus.js";
+import { parseSkodaPlusDetailText, parseSkodaPlusEdges } from "../src/sources/skodaplus.js";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/skodaplus-cars.json", import.meta.url));
 const response = JSON.parse(readFileSync(fixturePath, "utf-8"));
@@ -37,5 +37,32 @@ describe("skodaplus adapter", () => {
     expect(items[2].make).toBe("Audi");
     expect(items[2].model).toBe("A4");
     expect(items[2].title).toBe("Audi A4 2.0 TDI 140 kW S line");
+  });
+});
+
+describe("parseSkodaPlusDetailText (car(id) GraphQL query)", () => {
+  it("combines note + length (as '<n> mm') + every equipment item name", () => {
+    const text = parseSkodaPlusDetailText({
+      car: {
+        note: "1. majitel, servisní historie",
+        length: 5304,
+        equipmentItems: [{ name: "Tažné zařízení" }, { name: "Tempomat" }, { name: null }],
+      },
+    });
+    expect(text).toContain("1. majitel");
+    expect(text).toContain("5304 mm");
+    expect(text).toContain("Tažné zařízení");
+  });
+
+  it("omits the length text when null, still includes note/equipment", () => {
+    const text = parseSkodaPlusDetailText({
+      car: { note: "Pěkný vůz", length: null, equipmentItems: [] },
+    });
+    expect(text).toBe("Pěkný vůz");
+  });
+
+  it("returns null when the car is missing", () => {
+    expect(parseSkodaPlusDetailText({})).toBeNull();
+    expect(parseSkodaPlusDetailText({ car: null })).toBeNull();
   });
 });

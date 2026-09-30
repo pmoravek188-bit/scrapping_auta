@@ -13,6 +13,25 @@
  * client-side-only filters in the SPA), so those are left to the runner's
  * matcher.
  *
+ * RE-PROBED live 2026-09-30 (looking specifically for yearFrom/yearTo/
+ * priceTo/mileageMax/fuel/transmission query params, per the VW Multivan
+ * saved-search diagnosis — tipcars pages are dominated by irrelevant years
+ * because no year filter narrows them server-side): tried every plausible
+ * naming variant (`rok-od`/`rokOd`/`rok_vyroby_od`/`vyrobaOd`, `cena-od`/
+ * `cena-do`/`cenaOd`/`cenaDo`, `najeto-do`/`najetoDo`/`tachometr-do`,
+ * `palivo`, `prevodovka`) against `/ojete/volkswagen-multivan` and confirmed
+ * via the same "Zobrazeno N inzerátů" count that NONE of them changes it —
+ * still 214 every time. Also checked the sort control
+ * (`data-offer-listing-sorting-param`, e.g. `made-year-desc`) in case at
+ * least ordering-by-year could be pushed to surface relevant years first
+ * within the page cap — a `razeni=`/`sort=`/`sortBy=` query param made no
+ * difference to the server-rendered item order either (that UI control
+ * appears to be a client-side-only re-sort of an already-fetched page, same
+ * as the numeric filters). Conclusion unchanged from the original finding:
+ * tipcars has NO server-side filter beyond the make/model path segment — see
+ * the detail-enrichment pass (runner.ts) and the `bazos: 27 listings with
+ * year null` finding for how the matcher stays lenient instead where it can.
+ *
  * Pagination is `?str={page}-{pageSize}` (1-indexed page, pageSize=20), but
  * the actual item count per page is NOT reliably 20 — the unfiltered
  * `/ojete` root, for example, renders exactly 18 items per page (confirmed
@@ -281,9 +300,35 @@ export function parseTipCarsHtml(html: string): RawListing[] {
   return out;
 }
 
+/** Parses a listing detail page's long-text blocks (seller description,
+ * financing note) — confirmed live: `.detail-box__long-text` holds both the
+ * free-text seller description (which routinely mentions "long"/"prodloužená
+ * verze" wording title-derived make/model parsing misses) and a couple of
+ * unrelated short notes (financing discount blurb, "servisní knížka, platná
+ * STK, ..." tag line) — all harmless to include since feature-synonym
+ * matching is whole-token and specific. Exported for unit testing without a
+ * live call. */
+export function parseTipCarsDetailText(html: string): string | null {
+  const $ = cheerio.load(html);
+  const parts = $(".detail-box__long-text")
+    .map((_, el) => $(el).text().trim())
+    .get()
+    .filter(Boolean);
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
 export const tipcarsAdapter: SourceAdapter = {
   id: "tipcars",
   verified: true,
+  async fetchDetailText(listing: { url: string; sourceId: string }): Promise<string | null> {
+    try {
+      const html = await fetchText(listing.url);
+      return parseTipCarsDetailText(html);
+    } catch (err) {
+      console.warn(`[tipcars] fetchDetailText failed for ${listing.sourceId}:`, (err as Error).message);
+      return null;
+    }
+  },
   async search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]> {
     const maxPages = ctx.maxPages ?? MAX_RESULT_PAGES;
     const out: RawListing[] = [];

@@ -67,6 +67,10 @@ export function normalizeListing(raw: RawListing, opts: NormalizeOptions): Listi
     imageUrls: raw.imageUrls ?? [],
     drive,
     equipment: raw.equipment ?? [],
+    // Never set from a RawListing (the list-page scrape) — only the runner's
+    // detail-enrichment pass populates this, after normalization, directly
+    // on the Listing object it's about to match/store. See schemas.ts.
+    detailFeatures: [],
   };
 
   return {

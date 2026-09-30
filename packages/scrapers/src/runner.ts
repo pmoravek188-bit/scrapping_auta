@@ -1,5 +1,7 @@
 import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
+  detectFeatures,
+  isFeatureOnlyMismatch,
   matchesSearch,
   normalizeListing,
   normalizeMake,
@@ -9,6 +11,7 @@ import {
   type Listing,
   type SearchQuery,
 } from "@scrapping-auta/core";
+import type { SourceAdapter } from "./adapter.js";
 import { getAdapter } from "./registry.js";
 import { fetchEurCzkRate } from "./exchange-rate.js";
 import { sendMatchDigestEmail, type NotifySearchGroup } from "./notify/email.js";
@@ -40,6 +43,29 @@ const GONE_CIRCUIT_BREAKER_RATIO = 0.3;
  * source with a huge backlog could clear the ratio bar by having a huge
  * denominator while still deleting an alarming number of listings. */
 const GONE_CIRCUIT_BREAKER_MAX_ABSOLUTE = 20;
+/** Detail-page enrichment for near-match listings (see `enrichNearMatches`
+ * below): at most this many detail-page fetches per source per run, so a
+ * source with a lot of near-misses can't dominate the run's time/politeness
+ * budget — any candidate not reached this run is simply picked up again next
+ * run (or the run after, once its listing next re-qualifies as a
+ * near-match). */
+export const MAX_DETAIL_FETCHES_PER_SOURCE_PER_RUN = 40;
+/** A `detail_text_cache` row older than this is treated as stale and
+ * re-fetched rather than reused — a listing's equipment/description text can
+ * change (price drops, re-listings, edited ads). */
+export const DETAIL_CACHE_MAX_AGE_DAYS = 14;
+/** Per-source override for how many result pages a run walks, above the
+ * shared `MAX_RESULT_PAGES` default — currently just autoscout24 (confirmed
+ * live to often have 100-800+ results for a narrowed make/model+filter query
+ * on its `cy=D` Germany-only inventory, well past the shared default's
+ * 5-page/100-result cap; see AUTOSCOUT24_DEFAULT_MAX_PAGES in that adapter,
+ * which independently applies the same higher fallback for any OTHER caller
+ * that doesn't pass `maxPages` explicitly, e.g. a direct `adapter.search()`
+ * call — this map is what makes the real nightly run itself use it too,
+ * since the loop below always passes `maxPages` explicitly). */
+const PER_SOURCE_MAX_PAGES: Partial<Record<string, number>> = {
+  autoscout24: 15,
+};
 
 export interface RunOptions {
   dryRun?: boolean;
@@ -117,6 +143,115 @@ export function createSupabaseClient(url: string, serviceRoleKey: string): DbCli
   return createClient<Database>(url, serviceRoleKey, {
     auth: { persistSession: false },
   });
+}
+
+/**
+ * Detail-page enrichment for "near-match" listings: a listing that fails
+ * EVERY relevant query only on "features" (see core's `isFeatureOnlyMismatch`
+ * — it would be a full match if the feature/version chip(s) were satisfied)
+ * often has the missing info (e.g. "prodloužená verze"/long wheelbase) only
+ * on its DETAIL page, not the list page the adapter's `search()` already
+ * scraped. For each such listing (capped at `MAX_DETAIL_FETCHES_PER_SOURCE_
+ * PER_RUN`), this:
+ *   1. checks `detail_text_cache` first (skipped entirely in dry-run/no-db —
+ *      there's nowhere to read or write it, so it just fetches, still capped
+ *      the same way);
+ *   2. on a cache miss (or a stale one, older than `DETAIL_CACHE_MAX_AGE_
+ *      DAYS`), calls the adapter's optional `fetchDetailText` and re-runs
+ *      `detectFeatures` over title+variant+equipment+detail text;
+ *   3. writes the result back to `detail_text_cache` (even an empty
+ *      detection — that's a meaningful "fetched, found nothing", distinct
+ *      from "never looked");
+ *   4. sets `listing.detailFeatures` in place, so every subsequent use of
+ *      this same `Listing` object (matching, selection, upsert) sees it.
+ *
+ * A no-op when the adapter has no `fetchDetailText` (most sources) or there
+ * are no relevant queries at all.
+ */
+export async function enrichNearMatches(
+  db: DbClient | null,
+  sourceId: string,
+  adapter: SourceAdapter,
+  listings: Listing[],
+  queries: SearchQuery[]
+): Promise<void> {
+  if (!adapter.fetchDetailText || queries.length === 0) return;
+
+  const candidates = listings.filter((listing) => queries.some((q) => isFeatureOnlyMismatch(listing, q)));
+  if (candidates.length === 0) return;
+
+  const limited = candidates.slice(0, MAX_DETAIL_FETCHES_PER_SOURCE_PER_RUN);
+  const cacheCutoff = new Date(
+    Date.now() - DETAIL_CACHE_MAX_AGE_DAYS * 24 * 60 * 60 * 1000
+  ).toISOString();
+
+  const freshCacheBySourceId = new Map<string, string[]>();
+  if (db) {
+    const { data, error } = await db
+      .from("detail_text_cache")
+      .select("source_id, features, fetched_at")
+      .eq("source", sourceId)
+      .in(
+        "source_id",
+        limited.map((l) => l.sourceId)
+      );
+    if (error) {
+      console.warn(`[runner] ${sourceId}: detail-cache lookup failed:`, error.message);
+    } else {
+      for (const row of data ?? []) {
+        if (row.fetched_at >= cacheCutoff) freshCacheBySourceId.set(row.source_id, row.features ?? []);
+      }
+    }
+  }
+
+  let fetchedCount = 0;
+  let cacheHitCount = 0;
+  for (const listing of limited) {
+    const cached = freshCacheBySourceId.get(listing.sourceId);
+    if (cached) {
+      listing.detailFeatures = cached;
+      cacheHitCount++;
+      continue;
+    }
+
+    let detailText: string | null = null;
+    try {
+      detailText = await adapter.fetchDetailText({ url: listing.url, sourceId: listing.sourceId });
+    } catch (err) {
+      console.warn(
+        `[runner] ${sourceId}: fetchDetailText threw for ${listing.sourceId} (treating as no detail text):`,
+        (err as Error).message
+      );
+    }
+    fetchedCount++;
+
+    const haystack = `${listing.title} ${listing.variant ?? ""} ${(listing.equipment ?? []).join(" ")} ${detailText ?? ""}`;
+    const detected = detectFeatures(haystack);
+    listing.detailFeatures = detected;
+
+    if (db) {
+      const { error } = await db.from("detail_text_cache").upsert(
+        {
+          source: sourceId,
+          source_id: listing.sourceId,
+          features: detected,
+          fetched_at: new Date().toISOString(),
+        },
+        { onConflict: "source,source_id" }
+      );
+      if (error) {
+        console.warn(
+          `[runner] ${sourceId}: failed to cache detail features for ${listing.sourceId}:`,
+          error.message
+        );
+      }
+    }
+  }
+
+  console.log(
+    `[runner] ${sourceId}: detail-enrichment — ${candidates.length} near-match candidate(s), ` +
+      `${cacheHitCount} from cache, ${fetchedCount} fetched (cap ${MAX_DETAIL_FETCHES_PER_SOURCE_PER_RUN})`
+  );
 }
 
 export async function runScrape(opts: RunOptions = {}): Promise<void> {
@@ -222,7 +357,7 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
         try {
           const results = await adapter.search(query, {
             eurCzkRate,
-            maxPages: MAX_RESULT_PAGES,
+            maxPages: PER_SOURCE_MAX_PAGES[sourceId] ?? MAX_RESULT_PAGES,
           });
           for (const r of results) rawById.set(r.sourceId, r);
         } catch (err) {
@@ -245,6 +380,15 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
         : db
           ? relevantSearches.map(toSearchQuery)
           : [];
+
+      // Detail-page enrichment: for listings that fail every relevant query
+      // ONLY on "features" (see isFeatureOnlyMismatch), fetch the listing's
+      // detail page and re-detect features from title+variant+equipment+
+      // detail text — mutates `normalized` entries in place (sets
+      // `detailFeatures`), so every use of `normalized`/`toStore` below
+      // (selection, matching, upsert) automatically benefits.
+      await enrichNearMatches(db, sourceId, adapter, normalized, searchQueriesForSource);
+
       const toStore = selectListingsToStore(normalized, searchQueriesForSource);
 
       if (dryRun || !db) {
@@ -308,6 +452,7 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
               image_urls: listing.imageUrls,
               drive: listing.drive,
               equipment: listing.equipment,
+              detail_features: listing.detailFeatures,
               last_seen: now,
               is_active: true,
               fingerprint: listing.fingerprint,

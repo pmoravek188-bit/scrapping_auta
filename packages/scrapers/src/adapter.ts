@@ -16,4 +16,20 @@ export interface SourceAdapter {
   verified: boolean;
   /** Fetches raw listings from the source matching the given query. */
   search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]>;
+  /**
+   * Optional: fetches ONE listing's detail page/endpoint and returns a
+   * single free-text blob (description + equipment/feature list + any
+   * structured wheelbase/length text the source exposes) for near-match
+   * feature re-detection — see the runner's detail-enrichment pass
+   * (packages/scrapers/src/runner.ts) and `detail_text_cache`.
+   *
+   * Uses the same throttled/retried `politeFetch` (via fetchText/fetchJson
+   * in http.ts) as `search()` — no separate rate limiting needed by callers
+   * beyond capping how many listings they call this for per run.
+   *
+   * Returns `null` (never throws) on any failure — a 404, a parse error, a
+   * network timeout — so a bad detail fetch just means "no extra text this
+   * time", never aborts the run.
+   */
+  fetchDetailText?(listing: { url: string; sourceId: string }): Promise<string | null>;
 }

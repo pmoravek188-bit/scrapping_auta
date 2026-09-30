@@ -128,7 +128,7 @@ export function explainMatch(listing: Listing, query: SearchQuery): MatchFailure
   // detectable in the listing's title/variant/equipment text.
   if (query.features && query.features.length > 0) {
     const featureHaystack = `${listing.title} ${listing.variant ?? ""} ${(listing.equipment ?? []).join(" ")}`;
-    if (!hasAllFeatures(featureHaystack, query.features)) return "features";
+    if (!hasAllFeatures(featureHaystack, query.features, listing.detailFeatures)) return "features";
   }
 
   const haystack = `${listing.title} ${listing.variant ?? ""}`;
@@ -151,4 +151,18 @@ export function explainMatch(listing: Listing, query: SearchQuery): MatchFailure
 /** Returns true if a normalized Listing satisfies a saved SearchQuery. */
 export function matchesSearch(listing: Listing, query: SearchQuery): boolean {
   return explainMatch(listing, query) == null;
+}
+
+/**
+ * True if `listing` fails `query` on "features" ALONE — i.e. it would be a
+ * full match if the query's feature/version chips were satisfied. Used by
+ * the scraper runner (see packages/scrapers/src/runner.ts) to decide which
+ * near-match listings are worth an extra detail-page fetch: a listing that
+ * already fails on e.g. year/price has no chance of matching no matter what
+ * its detail page says, so it's not worth spending a fetch on.
+ */
+export function isFeatureOnlyMismatch(listing: Listing, query: SearchQuery): boolean {
+  if (!query.features || query.features.length === 0) return false;
+  if (explainMatch(listing, query) !== "features") return false;
+  return explainMatch(listing, { ...query, features: [] }) == null;
 }

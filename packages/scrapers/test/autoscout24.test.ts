@@ -5,6 +5,7 @@ import {
   buildAutoScout24Url,
   purchasePriceEur,
   parseAutoScout24Html,
+  parseAutoScout24DetailText,
 } from "../src/sources/autoscout24.js";
 import type { SearchQuery } from "@scrapping-auta/core";
 
@@ -65,6 +66,26 @@ describe("autoscout24 adapter", () => {
     expect(url).toContain("/lst/mercedes-benz/vito");
   });
 
+  it("pushes transmission down to the 'gear' query param (confirmed live: A/M)", () => {
+    expect(buildAutoScout24Url({ ...baseQuery, transmission: "automatic" }, 0, EUR_CZK_RATE)).toContain("gear=A");
+    expect(buildAutoScout24Url({ ...baseQuery, transmission: "manual" }, 0, EUR_CZK_RATE)).toContain("gear=M");
+  });
+
+  it("pushes a single fuel filter down to its confirmed 'fuel' query code", () => {
+    expect(buildAutoScout24Url({ ...baseQuery, fuel: ["diesel"] }, 0, EUR_CZK_RATE)).toContain("fuel=D");
+    expect(buildAutoScout24Url({ ...baseQuery, fuel: ["petrol"] }, 0, EUR_CZK_RATE)).toContain("fuel=B");
+    expect(buildAutoScout24Url({ ...baseQuery, fuel: ["electric"] }, 0, EUR_CZK_RATE)).toContain("fuel=E");
+  });
+
+  it("omits the fuel filter with multiple fuels ticked or no confirmed mapping", () => {
+    expect(buildAutoScout24Url({ ...baseQuery, fuel: ["diesel", "petrol"] }, 0, EUR_CZK_RATE)).not.toContain("fuel=");
+    expect(buildAutoScout24Url({ ...baseQuery, fuel: ["hybrid"] }, 0, EUR_CZK_RATE)).not.toContain("fuel=");
+  });
+
+  it("pushes power_min_kw down to the 'powerfrom' query param", () => {
+    expect(buildAutoScout24Url({ ...baseQuery, powerMinKw: 110 }, 0, EUR_CZK_RATE)).toContain("powerfrom=110");
+  });
+
   it("purchasePriceEur passes priceRaw through unchanged for a normal listing", () => {
     expect(purchasePriceEur({ priceRaw: 8700, isVatLabelLegallyRequired: false })).toBe(8700);
   });
@@ -106,5 +127,44 @@ describe("autoscout24 adapter", () => {
     expect(items[2].price).toBe(20000);
     expect(items[2].title).toContain("· odpočet DPH");
     expect(items[2].title.startsWith("Volkswagen Transporter")).toBe(true);
+  });
+});
+
+describe("parseAutoScout24DetailText", () => {
+  function detailHtml(listingDetails: unknown): string {
+    const nextData = { props: { pageProps: { listingDetails } } };
+    return `<html><body><script id="__NEXT_DATA__">${JSON.stringify(nextData)}</script></body></html>`;
+  }
+
+  it("combines modelVersionInput + HTML-stripped description + every equipment item label", () => {
+    const html = detailHtml({
+      description: "<strong>Langer Radstand</strong><br />Sehr gepflegt.",
+      vehicle: {
+        modelVersionInput: "T6 Multivan Highline",
+        equipment: {
+          comfortAndConvenience: [{ id: "Klimaautomatik" }],
+          safetyAndSecurity: [{ id: "ABS" }, { id: null }],
+        },
+      },
+    });
+    const text = parseAutoScout24DetailText(html);
+    expect(text).toContain("T6 Multivan Highline");
+    expect(text).toContain("Langer Radstand");
+    expect(text).toContain("Sehr gepflegt.");
+    expect(text).toContain("Klimaautomatik");
+    expect(text).toContain("ABS");
+    expect(text).not.toContain("<strong>");
+    expect(text).not.toContain("<br");
+  });
+
+  it("returns null when __NEXT_DATA__ or listingDetails is missing", () => {
+    expect(parseAutoScout24DetailText("<html><body>no data here</body></html>")).toBeNull();
+    expect(parseAutoScout24DetailText(detailHtml(undefined))).toBeNull();
+  });
+
+  it("returns null (not throws) on malformed JSON", () => {
+    expect(
+      parseAutoScout24DetailText('<script id="__NEXT_DATA__">{not valid json</script>')
+    ).toBeNull();
   });
 });

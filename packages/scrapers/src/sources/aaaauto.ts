@@ -40,6 +40,7 @@
  * 340) — matching its own structured listing data, where the ld+json
  * `model` field for a V-Class car is literally `"V"`, not `"V-Class"`.
  */
+import * as cheerio from "cheerio";
 import type { RawListing, SearchQuery } from "@scrapping-auta/core";
 import {
   audiQ8EtronFallbackSlug,
@@ -49,7 +50,7 @@ import {
   slugifyMakeModel,
   vwIdModelUrlSlug,
 } from "@scrapping-auta/core";
-import { fetchTextWithUrl, MAX_RESULT_PAGES } from "../http.js";
+import { fetchText, fetchTextWithUrl, MAX_RESULT_PAGES } from "../http.js";
 import type { SourceAdapter, SourceContext } from "../adapter.js";
 import { extractPowerKw } from "./_util-b.js";
 
@@ -179,9 +180,32 @@ export function parseAaaAutoHtml(html: string): RawListing[] {
   return out;
 }
 
+/** Parses a listing detail page's equipment chip list — confirmed live:
+ * `.detail-equipment__item` spans hold every equipment label shown under the
+ * page's "Výbava" section (the ld+json `description` on this page is just
+ * the auto-generated title/spec line, no free text worth adding). Exported
+ * for unit testing without a live call. */
+export function parseAaaAutoDetailText(html: string): string | null {
+  const $ = cheerio.load(html);
+  const items = $(".detail-equipment__item")
+    .map((_, el) => $(el).text().trim())
+    .get()
+    .filter(Boolean);
+  return items.length > 0 ? items.join(" ") : null;
+}
+
 export const aaaautoAdapter: SourceAdapter = {
   id: "aaaauto",
   verified: true,
+  async fetchDetailText(listing: { url: string; sourceId: string }): Promise<string | null> {
+    try {
+      const html = await fetchText(listing.url);
+      return parseAaaAutoDetailText(html);
+    } catch (err) {
+      console.warn(`[aaaauto] fetchDetailText failed for ${listing.sourceId}:`, (err as Error).message);
+      return null;
+    }
+  },
   async search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]> {
     const maxPages = ctx.maxPages ?? MAX_RESULT_PAGES;
     const out: RawListing[] = [];

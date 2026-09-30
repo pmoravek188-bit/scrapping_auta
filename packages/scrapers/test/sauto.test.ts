@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { buildSautoUrl, parseSautoResponse } from "../src/sources/sauto.js";
+import { buildSautoUrl, parseSautoDetailText, parseSautoResponse } from "../src/sources/sauto.js";
 import type { SearchQuery } from "@scrapping-auta/core";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/sauto-search.json", import.meta.url));
@@ -106,5 +106,32 @@ describe("sauto adapter", () => {
   it("returns an empty array for an unexpected response shape", () => {
     expect(parseSautoResponse({ unexpected: true })).toEqual([]);
     expect(parseSautoResponse(null)).toEqual([]);
+  });
+});
+
+describe("parseSautoDetailText (GET /api/v1/items/{id})", () => {
+  it("combines the free-text variant + description + every equipment item name", () => {
+    const json = {
+      result: {
+        additional_model_name: "2.0TDI 150kW DSG 4x4 Long TZ",
+        description: "Vozidlo na cestě, další výbavy: automatické parkování",
+        equipment_cb: [
+          { equipment_category: "safety", name: "ABS", value: 8 },
+          { equipment_category: "assist", name: "Adaptivní tempomat", value: 232 },
+          { name: null },
+        ],
+      },
+    };
+    const text = parseSautoDetailText(json);
+    expect(text).toContain("2.0TDI 150kW DSG 4x4 Long TZ");
+    expect(text).toContain("Vozidlo na cestě");
+    expect(text).toContain("ABS");
+    expect(text).toContain("Adaptivní tempomat");
+  });
+
+  it("returns null for a missing/malformed result", () => {
+    expect(parseSautoDetailText({})).toBeNull();
+    expect(parseSautoDetailText(null)).toBeNull();
+    expect(parseSautoDetailText({ result: { description: null, equipment_cb: null } })).toBeNull();
   });
 });

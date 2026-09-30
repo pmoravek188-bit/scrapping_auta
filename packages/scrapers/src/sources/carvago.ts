@@ -286,9 +286,61 @@ export function parseCarvagoHtml(html: string): RawListing[] {
   return out;
 }
 
+interface CarvagoDetailCarData {
+  title?: string | null;
+  description?: string | null;
+  ai_description?: string | null;
+  equipment_version?: string | null;
+  catalog_features?: Array<{ label?: string | null }> | null;
+}
+interface CarvagoDetailNextData {
+  props?: {
+    pageProps?: {
+      carData?: CarvagoDetailCarData;
+    };
+  };
+}
+
+/** Parses a detail page's `__NEXT_DATA__` into one free-text blob: title +
+ * description (falling back to carvago's `ai_description` when the dealer
+ * didn't write one — confirmed live to be common) + equipment_version (trim
+ * name, e.g. "Highline") + every `catalog_features` label. Exported for unit
+ * testing without a live call. */
+export function parseCarvagoDetailText(html: string): string | null {
+  const m = /<script id="__NEXT_DATA__"[^>]*>([\s\S]*?)<\/script>/.exec(html);
+  if (!m?.[1]) return null;
+  let data: CarvagoDetailNextData;
+  try {
+    data = JSON.parse(m[1]) as CarvagoDetailNextData;
+  } catch {
+    return null;
+  }
+  const car = data.props?.pageProps?.carData;
+  if (!car) return null;
+  const featureLabels = (car.catalog_features ?? [])
+    .map((f) => f.label)
+    .filter((l): l is string => Boolean(l));
+  const parts = [
+    car.title,
+    car.description ?? car.ai_description,
+    car.equipment_version,
+    ...featureLabels,
+  ].filter((p): p is string => Boolean(p));
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
 export const carvagoAdapter: SourceAdapter = {
   id: "carvago",
   verified: true,
+  async fetchDetailText(listing: { url: string; sourceId: string }): Promise<string | null> {
+    try {
+      const html = await fetchTextWithUrl(listing.url);
+      return parseCarvagoDetailText(html.html);
+    } catch (err) {
+      console.warn(`[carvago] fetchDetailText failed for ${listing.sourceId}:`, (err as Error).message);
+      return null;
+    }
+  },
   async search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]> {
     const maxPages = ctx.maxPages ?? MAX_RESULT_PAGES;
     const out: RawListing[] = [];

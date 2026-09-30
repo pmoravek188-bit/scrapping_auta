@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { explainMatch, matchesSearch } from "../src/matcher.js";
+import { explainMatch, isFeatureOnlyMismatch, matchesSearch } from "../src/matcher.js";
 import { normalizeListing } from "../src/normalize.js";
 import type { SearchQuery } from "../src/schemas.js";
 
@@ -170,6 +170,98 @@ describe("matchesSearch", () => {
       sources: [],
     };
     expect(matchesSearch(fwd, q)).toBe(false);
+  });
+
+  // `Listing.detailFeatures`, populated by the scraper runner's detail-page
+  // enrichment pass (see packages/scrapers/src/runner.ts), lets a listing
+  // whose LIST-page text never mentioned a feature still match on it.
+  it("matches on a feature confirmed only via listing.detailFeatures (not present in title/variant/equipment)", () => {
+    const plain = normalizeListing(
+      {
+        sourceId: "6",
+        url: "https://example.com/6",
+        title: "Volkswagen Multivan 2.0 TDI Trendline",
+        make: "Volkswagen",
+        model: "Multivan",
+        year: 2018,
+        mileageKm: 90000,
+        price: 700000,
+        currency: "CZK",
+        fuel: "diesel",
+        transmission: "automat",
+      },
+      { source: "sauto" }
+    );
+    const q: SearchQuery = {
+      make: "volkswagen",
+      model: "multivan",
+      features: ["prodlouzena"],
+      fuel: [],
+      body: [],
+      keywords: [],
+      excludeKeywords: [],
+      sources: [],
+    };
+    expect(matchesSearch(plain, q)).toBe(false);
+    const enriched = { ...plain, detailFeatures: ["prodlouzena"] };
+    expect(matchesSearch(enriched, q)).toBe(true);
+  });
+});
+
+describe("isFeatureOnlyMismatch", () => {
+  const baseListing = normalizeListing(
+    {
+      sourceId: "7",
+      url: "https://example.com/7",
+      title: "Volkswagen Multivan 2.0 TDI Trendline",
+      make: "Volkswagen",
+      model: "Multivan",
+      year: 2018,
+      mileageKm: 90000,
+      price: 700000,
+      currency: "CZK",
+      fuel: "diesel",
+      transmission: "automat",
+    },
+    { source: "sauto" }
+  );
+  const query: SearchQuery = {
+    make: "volkswagen",
+    model: "multivan",
+    yearFrom: 2016,
+    priceTo: 1_000_000,
+    features: ["prodlouzena"],
+    fuel: [],
+    body: [],
+    keywords: [],
+    excludeKeywords: [],
+    sources: [],
+  };
+
+  it("is true when the listing would fully match if not for the feature chip", () => {
+    expect(explainMatch(baseListing, query)).toBe("features");
+    expect(isFeatureOnlyMismatch(baseListing, query)).toBe(true);
+  });
+
+  it("is false when the query has no feature chips at all", () => {
+    expect(isFeatureOnlyMismatch(baseListing, { ...query, features: [] })).toBe(false);
+  });
+
+  it("is false when the listing already fully matches (nothing to enrich)", () => {
+    const enriched = { ...baseListing, detailFeatures: ["prodlouzena"] };
+    expect(matchesSearch(enriched, query)).toBe(true);
+    expect(isFeatureOnlyMismatch(enriched, query)).toBe(false);
+  });
+
+  it("is false when the listing fails on something else too (year), not features alone", () => {
+    const tooOld = { ...baseListing, year: 2010 };
+    expect(explainMatch(tooOld, query)).toBe("year");
+    expect(isFeatureOnlyMismatch(tooOld, query)).toBe(false);
+  });
+
+  it("is false for a listing that fails on make/model regardless of features", () => {
+    const otherMake = { ...baseListing, make: "ford", model: "tourneo-custom" };
+    expect(isFeatureOnlyMismatch(otherMake, query)).toBe(false);
   });
 });
 

@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { buildCarvagoUrl, parseCarvagoHtml } from "../src/sources/carvago.js";
+import { buildCarvagoUrl, parseCarvagoDetailText, parseCarvagoHtml } from "../src/sources/carvago.js";
 import type { SearchQuery } from "@scrapping-auta/core";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/carvago-search.html", import.meta.url));
@@ -189,5 +189,40 @@ describe("carvago adapter", () => {
     expect(
       parseCarvagoHtml('<script id="__NEXT_DATA__">not json</script>')
     ).toEqual([]);
+  });
+});
+
+describe("parseCarvagoDetailText", () => {
+  function detailHtml(carData: unknown): string {
+    const nextData = { props: { pageProps: { carData } } };
+    return `<script id="__NEXT_DATA__">${JSON.stringify(nextData)}</script>`;
+  }
+
+  it("combines title + description + equipment_version + every catalog_features label", () => {
+    const html = detailHtml({
+      title: "Volkswagen T6 Multivan DSG Highline 4Motion",
+      description: "Dlouhý rozvor, top stav.",
+      equipment_version: "Highline",
+      catalog_features: [{ label: "Tažné zařízení" }, { label: "4x4" }, { label: null }],
+    });
+    const text = parseCarvagoDetailText(html);
+    expect(text).toContain("Volkswagen T6 Multivan DSG Highline 4Motion");
+    expect(text).toContain("Dlouhý rozvor");
+    expect(text).toContain("Highline");
+    expect(text).toContain("Tažné zařízení");
+  });
+
+  it("falls back to ai_description when description is absent", () => {
+    const html = detailHtml({
+      title: "Volkswagen T6 Multivan",
+      description: null,
+      ai_description: "Prostorný a komfortní rodinný vůz.",
+    });
+    expect(parseCarvagoDetailText(html)).toContain("Prostorný a komfortní rodinný vůz.");
+  });
+
+  it("returns null when __NEXT_DATA__ or carData is missing", () => {
+    expect(parseCarvagoDetailText("<html><body>no data</body></html>")).toBeNull();
+    expect(parseCarvagoDetailText(detailHtml(undefined))).toBeNull();
   });
 });

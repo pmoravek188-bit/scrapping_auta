@@ -175,9 +175,71 @@ export function parseSkodaPlusEdges(data: CarsQueryData): RawListing[] {
   return out;
 }
 
+const CAR_DETAIL_QUERY = `
+query CarDetail($id: ID!) {
+  car(id: $id) {
+    note
+    length
+    equipmentItems { name }
+  }
+}`;
+
+interface CarDetailQueryData {
+  car?: {
+    note?: string | null;
+    length?: number | null;
+    equipmentItems?: Array<{ name?: string | null }> | null;
+  } | null;
+}
+
+/** Parses the `car(id)` detail query response into one free-text blob: the
+ * dealer's free-text `note` + every equipment item name + the structured
+ * `length` (mm, when present) rendered as "<n> mm" so the shared
+ * length-based "prodlouzena" fallback (core's `detectLengthBasedProdlouzena`)
+ * can pick it up alongside the textual synonyms. Confirmed live (2026-09-30)
+ * via GraphQL introspection: `Car.length`/`note`/`equipmentItems` are real
+ * fields (`car(id: "Car-<numericId>")`); `length` was null on every sampled
+ * listing so far (not populated for most cars), included anyway since the
+ * schema clearly intends it as a real dimension. Exported for unit testing
+ * without a live call. */
+export function parseSkodaPlusDetailText(data: CarDetailQueryData): string | null {
+  const car = data.car;
+  if (!car) return null;
+  const equipmentNames = (car.equipmentItems ?? [])
+    .map((e) => e.name)
+    .filter((n): n is string => Boolean(n));
+  const parts = [car.note, car.length != null ? `${car.length} mm` : null, ...equipmentNames].filter(
+    (p): p is string => Boolean(p)
+  );
+  return parts.length > 0 ? parts.join(" ") : null;
+}
+
 export const skodaplusAdapter: SourceAdapter = {
   id: "skodaplus",
   verified: true,
+  async fetchDetailText(listing: { url: string; sourceId: string }): Promise<string | null> {
+    try {
+      const res = await fetchJson<GraphQlResponse<CarDetailQueryData>>(GRAPHQL_URL, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          query: CAR_DETAIL_QUERY,
+          // The GraphQL `id` is the numeric sourceId prefixed with "Car-"
+          // (see parseSkodaPlusEdges, which strips this same prefix off the
+          // OTHER direction when deriving sourceId from the search query).
+          variables: { id: `Car-${listing.sourceId}` },
+        }),
+      });
+      if (res.errors?.length) {
+        console.warn(`[skodaplus] fetchDetailText GraphQL error for ${listing.sourceId}:`, res.errors[0]?.message);
+        return null;
+      }
+      return parseSkodaPlusDetailText(res.data ?? {});
+    } catch (err) {
+      console.warn(`[skodaplus] fetchDetailText failed for ${listing.sourceId}:`, (err as Error).message);
+      return null;
+    }
+  },
   async search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]> {
     const maxPages = ctx.maxPages ?? MAX_RESULT_PAGES;
     const out: RawListing[] = [];

@@ -105,6 +105,7 @@ function rowToListing(row: ListingRow): Listing {
     fingerprint: row.fingerprint,
     drive: row.drive as Listing["drive"],
     equipment: row.equipment ?? [],
+    detailFeatures: row.detail_features ?? [],
   };
 }
 

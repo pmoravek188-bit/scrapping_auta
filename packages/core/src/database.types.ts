@@ -86,6 +86,7 @@ export interface Database {
           image_urls: string[];
           drive: string | null;
           equipment: string[];
+          detail_features: string[];
           first_seen: string;
           last_seen: string;
           is_active: boolean;
@@ -101,6 +102,20 @@ export interface Database {
           fingerprint: string;
         };
         Update: Partial<Database["public"]["Tables"]["listings"]["Row"]>;
+        Relationships: [];
+      };
+      detail_text_cache: {
+        Row: {
+          source: string;
+          source_id: string;
+          features: string[];
+          fetched_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["detail_text_cache"]["Row"]> & {
+          source: string;
+          source_id: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["detail_text_cache"]["Row"]>;
         Relationships: [];
       };
       price_history: {

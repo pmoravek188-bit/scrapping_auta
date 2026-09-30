@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { buildAaaAutoUrl, parseAaaAutoHtml } from "../src/sources/aaaauto.js";
+import { buildAaaAutoUrl, parseAaaAutoDetailText, parseAaaAutoHtml } from "../src/sources/aaaauto.js";
 import type { SearchQuery } from "@scrapping-auta/core";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/aaaauto-search.html", import.meta.url));
@@ -128,5 +128,26 @@ describe("aaaauto adapter", () => {
 
   it("returns an empty array when there's no ld+json ItemList", () => {
     expect(parseAaaAutoHtml("<html><body>no data</body></html>")).toEqual([]);
+  });
+});
+
+describe("parseAaaAutoDetailText", () => {
+  it("joins every '.detail-equipment__item' label", () => {
+    const html = `
+      <html><body>
+        <div class="detail-equipment">
+          <span class="detail-equipment__item">Adaptivní tempomat</span>
+          <span class="detail-equipment__item">Tažné zařízení</span>
+          <span class="detail-equipment__item">LED hlavní světlomety</span>
+        </div>
+      </body></html>`;
+    const text = parseAaaAutoDetailText(html);
+    expect(text).toContain("Adaptivní tempomat");
+    expect(text).toContain("Tažné zařízení");
+    expect(text).toContain("LED hlavní světlomety");
+  });
+
+  it("returns null when the page has no equipment items", () => {
+    expect(parseAaaAutoDetailText("<html><body>no data</body></html>")).toBeNull();
   });
 });
