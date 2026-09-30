@@ -41,5 +41,22 @@ export default tseslint.config(
         __filename: "readonly",
       },
     },
+  },
+  {
+    // The PWA service worker runs in a Worker global scope (loaded directly
+    // by the browser, not bundled), so it needs its own globals rather than
+    // Node's or a normal window's.
+    files: ["**/public/sw.js"],
+    languageOptions: {
+      sourceType: "script",
+      globals: {
+        self: "readonly",
+        caches: "readonly",
+        fetch: "readonly",
+        Request: "readonly",
+        Response: "readonly",
+        URL: "readonly",
+      },
+    },
   }
 );

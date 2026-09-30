@@ -82,7 +82,10 @@ export function SiteHeader() {
   }
 
   return (
-    <header className="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur">
+    <header
+      className="sticky top-0 z-40 border-b border-gray-200 bg-white/95 backdrop-blur"
+      style={{ paddingTop: "env(safe-area-inset-top)" }}
+    >
       <nav className="mx-auto flex max-w-6xl items-center gap-6 px-4 py-3">
         <Link href="/" className="flex items-center gap-1.5 text-base font-bold text-gray-900">
           <Car className="h-5 w-5 text-brand-600" aria-hidden />

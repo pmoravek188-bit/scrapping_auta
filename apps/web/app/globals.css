@@ -8,6 +8,11 @@
 
 body {
   @apply bg-gray-100 text-gray-900 antialiased;
+  /* In standalone (installed) mode there's no browser chrome, so pad the
+     bottom of the page away from the iPhone home indicator / Android
+     gesture bar. Safe-area-inset-* is 0 in a normal browser tab, so this
+     is a no-op outside of installed PWA mode. */
+  padding-bottom: env(safe-area-inset-bottom);
 }
 
 .btn {
