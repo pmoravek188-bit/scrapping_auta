@@ -187,10 +187,10 @@ export default async function ResultsPage({ searchParams }: { searchParams: Prom
       </div>
 
       {/* Search switcher: "Vše" scans public.listings directly; each chip
-          scans that search's matches. Horizontally scrollable so it never
-          causes page overflow on narrow screens. */}
-      <div className="mb-4 -mx-1 min-w-0 overflow-x-auto px-1">
-        <div className="flex w-max flex-nowrap gap-2 text-xs">
+          scans that search's matches. Chips wrap onto more lines so they never
+          cause page overflow on narrow screens. */}
+      <div className="mb-4">
+        <div className="flex flex-wrap gap-2 text-xs">
           <Link
             href={hrefWith({ search: null })}
             className={`whitespace-nowrap rounded-full border px-3 py-1 ${!searchId ? "border-brand-500 bg-brand-50 text-brand-700" : "border-gray-300 bg-white"}`}
