@@ -6,9 +6,16 @@ concurrency:
 
 on:
   schedule:
-    # Once a day at 05:00 UTC (07:00 Prague summer time). Also keeps the
-    # Supabase free-tier project active (it pauses after 7 days idle).
-    - cron: "0 5 * * *"
+    # Three times a day: 05:00, 11:00, 17:00 UTC (07:00/13:00/19:00 Prague
+    # summer time). Also keeps the Supabase free-tier project active (it
+    # pauses after 7 days idle). The e-mail digest itself only ever reports
+    # matches that are new since the last notification (see
+    # `notifyNewMatches` in packages/scrapers/src/runner.ts, which only
+    # selects `matches` rows with `notified_at is null`) — running more often
+    # just shortens the delay before a new match is reported, it never
+    # resends anything already notified, so this can't spam 3 full digests a
+    # day, only up to 3 *when there actually are new matches*.
+    - cron: "0 5,11,17 * * *"
   workflow_dispatch:
     inputs:
       source:

@@ -3,6 +3,23 @@ import { hasAllFeatures } from "./features.js";
 import { includesPhrase } from "./text-match.js";
 import type { Listing, SearchQuery } from "./schemas.js";
 
+/**
+ * Sources whose list page frequently omits `year` entirely (not "the car has
+ * no year", just "this source's list page doesn't expose it" — see e.g.
+ * bazos.ts: year is only recoverable via a regex over free title/description
+ * text, which doesn't always succeed). For these sources ONLY, a null
+ * `listing.year` is treated as "unknown, don't reject" against a query's
+ * yearFrom/yearTo, same leniency policy as fuel/transmission/body/power/drive
+ * elsewhere in `explainMatch`.
+ *
+ * Every OTHER source keeps the strict behavior (null year = rejected by any
+ * year filter) on purpose: year is a real, deliberately-set numeric filter,
+ * and most sources DO reliably supply it — silently passing every listing
+ * with a missing year there would let through genuinely wrong results (e.g.
+ * a parse failure) rather than real "source doesn't have this field" gaps.
+ */
+const YEAR_NULL_LENIENT_SOURCES: ReadonlySet<string> = new Set(["bazos"]);
+
 /** Whole-token match (see `text-match.ts`): "havarovaná" never matches
  * "nehavarovaná", "4x4" never matches "4x40" — a shared prefix/suffix isn't
  * the same word the user typed. */
@@ -66,11 +83,20 @@ export function explainMatch(listing: Listing, query: SearchQuery): MatchFailure
     if (!modelMatches(listing.model, queryModel, titleHaystack)) return "model";
   }
 
-  if (query.yearFrom != null && (listing.year == null || listing.year < query.yearFrom)) {
-    return "year";
-  }
-  if (query.yearTo != null && (listing.year == null || listing.year > query.yearTo)) {
-    return "year";
+  if (listing.year == null) {
+    // See YEAR_NULL_LENIENT_SOURCES: a handful of sources frequently can't
+    // supply year at all on their list page, so an unknown year there is
+    // treated as "might match", not a rejection. Every other source stays
+    // strict: no year = fails any year filter, same as before.
+    if (
+      !YEAR_NULL_LENIENT_SOURCES.has(listing.source) &&
+      (query.yearFrom != null || query.yearTo != null)
+    ) {
+      return "year";
+    }
+  } else {
+    if (query.yearFrom != null && listing.year < query.yearFrom) return "year";
+    if (query.yearTo != null && listing.year > query.yearTo) return "year";
   }
 
   if (

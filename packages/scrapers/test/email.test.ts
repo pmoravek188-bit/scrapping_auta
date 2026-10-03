@@ -4,6 +4,8 @@ import {
   renderDigestHtml,
   renderDigestText,
   sendMatchDigestEmail,
+  sendSourceAlertEmail,
+  type NotifyFavoriteChange,
   type NotifySearchGroup,
 } from "../src/notify/email.js";
 
@@ -133,13 +135,14 @@ describe("sendMatchDigestEmail", () => {
   });
 
   it("skips silently when config is missing", async () => {
-    const sent = await sendMatchDigestEmail([group], null);
+    const sent = await sendMatchDigestEmail([group], [], null);
     expect(sent).toBe(false);
   });
 
-  it("skips when there are no listings to send", async () => {
+  it("skips when there are no listings and no favourite changes to send", async () => {
     const sent = await sendMatchDigestEmail(
       [{ searchName: "x", listings: [] }],
+      [],
       { apiKey: "k", to: "a@b.com", from: "f@b.com" }
     );
     expect(sent).toBe(false);
@@ -149,7 +152,7 @@ describe("sendMatchDigestEmail", () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => "" });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const sent = await sendMatchDigestEmail([group], {
+    const sent = await sendMatchDigestEmail([group], [], {
       apiKey: "key",
       to: "me@example.com",
       from: "Scrapping auta <onboarding@resend.dev>",
@@ -160,5 +163,114 @@ describe("sendMatchDigestEmail", () => {
       "https://api.resend.com/emails",
       expect.objectContaining({ method: "POST" })
     );
+  });
+
+  const priceDropChange: NotifyFavoriteChange = {
+    kind: "price_drop",
+    title: "Škoda Fabia",
+    url: "https://example.com/fabia",
+    source: "sauto",
+    priceCzk: 150000,
+    previousPriceCzk: 180000,
+    year: 2017,
+    mileageKm: 120000,
+    fuel: "petrol",
+    imageUrl: null,
+  };
+
+  it("still sends when there are no new matches but there ARE favourite changes", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => "" });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const sent = await sendMatchDigestEmail([], [priceDropChange], {
+      apiKey: "key",
+      to: "me@example.com",
+      from: "Scrapping auta <onboarding@resend.dev>",
+    });
+
+    expect(sent).toBe(true);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.subject).toContain("1 změn v oblíbených");
+    expect(body.subject).not.toContain("nových nabídek");
+  });
+});
+
+describe("renderDigestHtml / renderDigestText (favourites section)", () => {
+  const priceDropChange: NotifyFavoriteChange = {
+    kind: "price_drop",
+    title: "Škoda Fabia",
+    url: "https://example.com/fabia",
+    source: "sauto",
+    priceCzk: 150000,
+    previousPriceCzk: 180000,
+    year: 2017,
+    mileageKm: 120000,
+    fuel: "petrol",
+    imageUrl: null,
+  };
+
+  const goneChange: NotifyFavoriteChange = {
+    kind: "gone",
+    title: "Toyota Yaris",
+    url: "https://example.com/yaris",
+    source: "tipcars",
+    priceCzk: null,
+    previousPriceCzk: null,
+    year: 2015,
+    mileageKm: null,
+    fuel: null,
+    imageUrl: null,
+  };
+
+  it("renders a price-drop favourite change with both the new and the crossed-out old price", () => {
+    const html = renderDigestHtml([], [priceDropChange]);
+    expect(html).toContain("Oblíbené: zlevnění / prodáno (1)");
+    expect(html).toContain("Škoda Fabia");
+    expect(html).toContain("150 000");
+    expect(html).toContain("180 000");
+
+    const text = renderDigestText([], [priceDropChange]);
+    expect(text).toContain("Škoda Fabia");
+    expect(text).toContain("150 000");
+    expect(text).toContain("180 000");
+  });
+
+  it("renders a gone favourite change as 'Prodáno / nedostupné'", () => {
+    const html = renderDigestHtml([], [goneChange]);
+    expect(html).toContain("Prodáno / nedostupné");
+    expect(html).toContain("Toyota Yaris");
+  });
+
+  it("renders no favourites section at all when there are no changes", () => {
+    const html = renderDigestHtml([], []);
+    expect(html).not.toContain("Oblíbené:");
+  });
+});
+
+describe("sendSourceAlertEmail", () => {
+  const originalFetch = global.fetch;
+  afterEach(() => {
+    global.fetch = originalFetch;
+    vi.restoreAllMocks();
+  });
+
+  it("skips silently when config is missing", async () => {
+    const sent = await sendSourceAlertEmail("sauto", null);
+    expect(sent).toBe(false);
+  });
+
+  it("sends with the expected subject when configured", async () => {
+    const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => "" });
+    global.fetch = fetchMock as unknown as typeof fetch;
+
+    const sent = await sendSourceAlertEmail("sauto", {
+      apiKey: "key",
+      to: "me@example.com",
+      from: "Scrapping auta <onboarding@resend.dev>",
+    });
+
+    expect(sent).toBe(true);
+    const body = JSON.parse(fetchMock.mock.calls[0][1].body);
+    expect(body.subject).toBe("⚠️ Scrapping cars: zdroj sauto nevrací auta");
   });
 });

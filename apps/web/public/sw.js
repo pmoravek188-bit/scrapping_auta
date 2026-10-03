@@ -9,8 +9,13 @@
 // Everything else is network-first: try the network, and only for full-page
 // navigations that fail (offline), fall back to a tiny inline "Jste offline"
 // page. Bump CACHE_VERSION to invalidate previously cached static assets.
+//
+// Also handles Web Push (see apps/web/lib/push.ts for subscribing and
+// packages/scrapers/src/push.ts for sending): `push` shows a notification
+// from the payload JSON ({title, body, url}), `notificationclick` focuses an
+// already-open tab on that URL if there is one, else opens a new one.
 
-const CACHE_VERSION = "v1";
+const CACHE_VERSION = "v2";
 const STATIC_CACHE = `scrapping-auta-static-${CACHE_VERSION}`;
 
 const OFFLINE_HTML = `<!doctype html>
@@ -105,4 +110,46 @@ self.addEventListener("fetch", (event) => {
   // Everything else (API routes, Supabase requests, auth, RSC data, etc.):
   // straight to the network, no caching, no fallback.
   event.respondWith(fetch(request));
+});
+
+self.addEventListener("push", (event) => {
+  let payload = { title: "Scrapping cars", body: "" };
+  try {
+    if (event.data) payload = { ...payload, ...event.data.json() };
+  } catch {
+    // Non-JSON payload (shouldn't happen — the runner always sends JSON) —
+    // fall back to the default title/empty body rather than failing to show
+    // anything at all.
+  }
+
+  const url = payload.url || "/";
+  event.waitUntil(
+    self.registration.showNotification(payload.title, {
+      body: payload.body,
+      icon: "/icons/icon-192.png",
+      badge: "/icons/icon-192.png",
+      data: { url },
+    })
+  );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = event.notification.data && event.notification.data.url ? event.notification.data.url : "/";
+  const targetUrl = new URL(url, self.location.origin).href;
+
+  event.waitUntil(
+    self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+      for (const client of clients) {
+        if (client.url === targetUrl && "focus" in client) return client.focus();
+      }
+      // No exact-URL match: focus any open tab and navigate it, else open a new one.
+      for (const client of clients) {
+        if ("focus" in client && "navigate" in client) {
+          return client.focus().then(() => client.navigate(targetUrl));
+        }
+      }
+      return self.clients.openWindow(targetUrl);
+    })
+  );
 });

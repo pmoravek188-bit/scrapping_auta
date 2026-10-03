@@ -1,4 +1,3 @@
-import { createClient, type SupabaseClient } from "@supabase/supabase-js";
 import {
   detectFeatures,
   isFeatureOnlyMismatch,
@@ -7,20 +6,24 @@ import {
   normalizeMake,
   normalizeModel,
   SearchQuerySchema,
-  type Database,
   type Listing,
   type SearchQuery,
 } from "@scrapping-auta/core";
 import type { SourceAdapter } from "./adapter.js";
 import { getAdapter } from "./registry.js";
 import { fetchEurCzkRate } from "./exchange-rate.js";
-import { sendMatchDigestEmail, type NotifySearchGroup } from "./notify/email.js";
+import { sendMatchDigestEmail, type NotifySearchGroup, type NotifyFavoriteChange } from "./notify/email.js";
 import { fetchForGoneCheck, MAX_RESULT_PAGES } from "./http.js";
 import { selectListingsToStore } from "./selection.js";
 import { isGone } from "./gone-detection.js";
 import { checkListingsHaveLoadableImages, IMAGE_CHECK_CONCURRENCY } from "./image-check.js";
+import { createSupabaseClient, type DbClient } from "./db.js";
+import { getVapidConfig, sendPushToUser, type VapidConfig } from "./push.js";
+import { checkSourceHealthAndAlert } from "./health-alert.js";
+import { checkFavoritesAlerts, sendFavoritesAlertPush } from "./favorites-alert.js";
 
-export type DbClient = SupabaseClient<Database>;
+export type { DbClient } from "./db.js";
+export { createSupabaseClient } from "./db.js";
 
 const CLEANUP_UNMATCHED_AFTER_DAYS = 3;
 const CLEANUP_BATCH_SIZE = 200;
@@ -67,6 +70,24 @@ export const DETAIL_CACHE_MAX_AGE_DAYS = 14;
 const PER_SOURCE_MAX_PAGES: Partial<Record<string, number>> = {
   autoscout24: 15,
 };
+/** tipcars.com has NO server-side year filter at all (confirmed live, see
+ * sources/tipcars.ts's header comment) — a make/model page is walked in
+ * listing order regardless of year, so a saved search with a yearFrom/yearTo
+ * narrow enough to be past the shared default page cap (MAX_RESULT_PAGES)
+ * would otherwise never reach its matching years. Only applied when the
+ * query actually has a year filter (see resolveMaxPages below) — an
+ * unfiltered-by-year query gets no benefit from walking further and would
+ * just spend extra politeFetch budget for nothing. */
+const TIPCARS_YEAR_FILTERED_MAX_PAGES = 10;
+
+/** Resolves how many result pages a run walks for one source+query pair.
+ * Exported for unit testing. */
+export function resolveMaxPages(sourceId: string, query: SearchQuery): number {
+  if (sourceId === "tipcars" && (query.yearFrom != null || query.yearTo != null)) {
+    return TIPCARS_YEAR_FILTERED_MAX_PAGES;
+  }
+  return PER_SOURCE_MAX_PAGES[sourceId] ?? MAX_RESULT_PAGES;
+}
 /** Per source, per run — caps how many listings get a real "does the image
  * load?" network check (see `filterListingsWithLoadableImages` below). A
  * listing past this cap isn't confirmed either way this run, so — same
@@ -145,12 +166,6 @@ function toOverrideQuery(override: Partial<SearchQuery>): SearchQuery {
     make,
     model: normalizeModel(parsed.model, make),
   };
-}
-
-export function createSupabaseClient(url: string, serviceRoleKey: string): DbClient {
-  return createClient<Database>(url, serviceRoleKey, {
-    auth: { persistSession: false },
-  });
 }
 
 /**
@@ -364,6 +379,9 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
   }
 
   const db: DbClient | null = dryRun ? null : createSupabaseClient(supabaseUrl!, serviceKey!);
+  // Read once per run and reused for every push send below — see push.ts's
+  // doc comment for why this lives in app_secrets rather than an env var.
+  const vapid = db ? await getVapidConfig(db) : null;
 
   const eurCzkRate = await fetchEurCzkRate({
     fetchLastKnownRate: db
@@ -386,13 +404,17 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
   }
 
   let sourceIds: string[];
+  const sourceMetaById = new Map<string, { name: string; lastAlertAt: string | null }>();
   if (db) {
     const { data: sourceRows, error } = await db
       .from("sources")
-      .select("id, enabled")
+      .select("id, enabled, name, last_alert_at")
       .eq("enabled", true);
     if (error) throw error;
     sourceIds = (sourceRows ?? []).map((s) => s.id);
+    for (const s of sourceRows ?? []) {
+      sourceMetaById.set(s.id, { name: s.name, lastAlertAt: s.last_alert_at });
+    }
   } else {
     sourceIds = Object.keys((await import("./registry.js")).ADAPTERS);
   }
@@ -456,7 +478,7 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
         try {
           const results = await adapter.search(query, {
             eurCzkRate,
-            maxPages: PER_SOURCE_MAX_PAGES[sourceId] ?? MAX_RESULT_PAGES,
+            maxPages: resolveMaxPages(sourceId, query),
           });
           for (const r of results) rawById.set(r.sourceId, r);
         } catch (err) {
@@ -625,6 +647,22 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
           last_count: found,
         })
         .eq("id", sourceId);
+
+      // Source health alert (see health-alert.ts): only the scrape itself
+      // failing/returning nothing counts as "errored" here, not a tripped
+      // gone-check circuit breaker (goneWarning) — that's a different,
+      // already-surfaced issue, and the source DID return cars this run in
+      // that case, so it shouldn't trigger a "stopped returning cars" alert.
+      const meta = sourceMetaById.get(sourceId);
+      if (meta) {
+        await checkSourceHealthAndAlert(
+          db,
+          vapid,
+          { id: sourceId, name: meta.name, lastAlertAt: meta.lastAlertAt },
+          found,
+          Boolean(errorText)
+        );
+      }
     }
   }
 
@@ -638,7 +676,7 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
     }
 
     await deleteExpiredGoneFavorites(db);
-    await notifyNewMatches(db);
+    await notifyNewMatches(db, vapid);
   }
 }
 
@@ -847,10 +885,17 @@ async function cleanupUnmatchedListings(db: DbClient): Promise<void> {
   );
 }
 
-async function notifyNewMatches(db: DbClient): Promise<void> {
+/**
+ * Only matches created since the last notification get notified (the
+ * `notified_at is null` filter below) — so running the scraper 3x/day (see
+ * .github/workflows/scrape.yml) never resends anything already reported,
+ * and a run with nothing new simply sends nothing (see sendMatchDigestEmail
+ * / sendPushToUser's own "nothing to send" no-ops).
+ */
+async function notifyNewMatches(db: DbClient, vapid: VapidConfig | null): Promise<void> {
   const { data: pending, error } = await db
     .from("matches")
-    .select("id, search_id, listing_id, searches!inner(name, notify), listings(*)")
+    .select("id, search_id, listing_id, searches!inner(name, notify, user_id), listings(*)")
     .is("notified_at", null)
     .eq("searches.notify", true);
 
@@ -861,15 +906,14 @@ async function notifyNewMatches(db: DbClient): Promise<void> {
   const rows = (pending ?? []) as unknown as Array<{
     id: string;
     search_id: string;
-    searches: { name: string; notify: boolean };
+    searches: { name: string; notify: boolean; user_id: string };
     listings: Record<string, unknown> | null;
   }>;
-  if (rows.length === 0) {
-    console.log("[notify] no pending matches to notify");
-    return;
-  }
 
-  const groupsBySearch = new Map<string, NotifySearchGroup>();
+  interface SearchGroup extends NotifySearchGroup {
+    userId: string;
+  }
+  const groupsBySearch = new Map<string, SearchGroup>();
   for (const row of rows) {
     if (!row.listings) continue;
     const l = row.listings as {
@@ -884,6 +928,7 @@ async function notifyNewMatches(db: DbClient): Promise<void> {
     };
     const group = groupsBySearch.get(row.search_id) ?? {
       searchName: row.searches.name,
+      userId: row.searches.user_id,
       listings: [],
     };
     group.listings.push({
@@ -899,9 +944,45 @@ async function notifyNewMatches(db: DbClient): Promise<void> {
     groupsBySearch.set(row.search_id, group);
   }
 
-  const sent = await sendMatchDigestEmail(Array.from(groupsBySearch.values()));
-  if (sent) {
+  // Favourites alerts (price drop / gone — see favorites-alert.ts) ride
+  // along on the same digest e-mail as a separate section, and get their
+  // own push per owner below. Independent of whether there are any new
+  // matches at all this run.
+  const favoriteEvents = await checkFavoritesAlerts(db);
+  const favoriteChanges: NotifyFavoriteChange[] = favoriteEvents.map((e) => e.change);
+
+  if (rows.length === 0 && favoriteChanges.length === 0) {
+    console.log("[notify] nothing to notify (no new matches, no favourite changes)");
+    return;
+  }
+
+  const searchGroups = Array.from(groupsBySearch.values());
+  const sent = await sendMatchDigestEmail(searchGroups, favoriteChanges);
+  if (sent && rows.length > 0) {
     const ids = rows.map((r) => r.id);
     await db.from("matches").update({ notified_at: new Date().toISOString() }).in("id", ids);
   }
+
+  // Push: one notification per search with new matches, to that search's
+  // owner — "Nové auto: <title> – <price>" for a single new match, or
+  // "N nových aut pro <search>" for several, linking to that search's
+  // /results view.
+  for (const [searchId, group] of groupsBySearch) {
+    if (group.listings.length === 0) continue;
+    const title =
+      group.listings.length === 1
+        ? `Nové auto: ${group.listings[0]!.title} – ${group.listings[0]!.priceCzk?.toLocaleString("cs-CZ") ?? "?"} Kč`
+        : `${group.listings.length} nových aut pro ${group.searchName}`;
+    try {
+      await sendPushToUser(db, vapid, group.userId, {
+        title,
+        body: group.searchName,
+        url: `/results?search=${searchId}`,
+      });
+    } catch (err) {
+      console.warn(`[notify] push failed for search ${searchId}:`, (err as Error).message);
+    }
+  }
+
+  await sendFavoritesAlertPush(db, vapid, favoriteEvents);
 }

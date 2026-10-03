@@ -21,6 +21,7 @@ export interface Database {
           last_run_at: string | null;
           last_ok_at: string | null;
           last_count: number | null;
+          last_alert_at: string | null;
           created_at: string;
         };
         Insert: Partial<Database["public"]["Tables"]["sources"]["Row"]> & { id: string };
@@ -187,12 +188,42 @@ export interface Database {
           listing_id: string;
           created_at: string;
           note: string | null;
+          last_notified_price: number | null;
+          last_notified_gone_at: string | null;
         };
         Insert: Partial<Database["public"]["Tables"]["favorites"]["Row"]> & {
           user_id: string;
           listing_id: string;
         };
         Update: Partial<Database["public"]["Tables"]["favorites"]["Row"]>;
+        Relationships: [];
+      };
+      push_subscriptions: {
+        Row: {
+          id: string;
+          user_id: string;
+          endpoint: string;
+          p256dh: string;
+          auth: string;
+          user_agent: string | null;
+          created_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["push_subscriptions"]["Row"]> & {
+          user_id: string;
+          endpoint: string;
+          p256dh: string;
+          auth: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["push_subscriptions"]["Row"]>;
+        Relationships: [];
+      };
+      app_secrets: {
+        Row: {
+          key: string;
+          value: string;
+        };
+        Insert: Database["public"]["Tables"]["app_secrets"]["Row"];
+        Update: Partial<Database["public"]["Tables"]["app_secrets"]["Row"]>;
         Relationships: [];
       };
     };

@@ -208,6 +208,90 @@ describe("matchesSearch", () => {
   });
 });
 
+// Bazoš's list page frequently omits year entirely (it's only recoverable
+// via a regex over free title/description text) — see matcher.ts's
+// YEAR_NULL_LENIENT_SOURCES. A null year there must not fail a year filter,
+// but every other source must stay strict.
+describe("matchesSearch (year leniency for sources with no reliable year field)", () => {
+  function listingWithNullYear(source: string) {
+    return normalizeListing(
+      {
+        sourceId: "y1",
+        url: "https://example.com/y1",
+        title: "Škoda Octavia 2.0 TDI",
+        make: "Škoda",
+        model: "Octavia",
+        year: null,
+        mileageKm: 60000,
+        price: 300000,
+        currency: "CZK",
+      },
+      { source }
+    );
+  }
+
+  it("does not reject a bazos listing with a null year against a yearFrom/yearTo filter", () => {
+    const listing = listingWithNullYear("bazos");
+    const q: SearchQuery = {
+      yearFrom: 2015,
+      yearTo: 2022,
+      fuel: [],
+      body: [],
+      keywords: [],
+      excludeKeywords: [],
+      sources: [],
+    };
+    expect(explainMatch(listing, q)).toBeNull();
+    expect(matchesSearch(listing, q)).toBe(true);
+  });
+
+  it("still rejects a non-lenient source's listing with a null year against a year filter", () => {
+    const listing = listingWithNullYear("sauto");
+    const q: SearchQuery = {
+      yearFrom: 2015,
+      fuel: [],
+      body: [],
+      keywords: [],
+      excludeKeywords: [],
+      sources: [],
+    };
+    expect(explainMatch(listing, q)).toBe("year");
+    expect(matchesSearch(listing, q)).toBe(false);
+  });
+
+  it("still enforces year bounds on a bazos listing that DOES state a year", () => {
+    const listing = normalizeListing(
+      {
+        sourceId: "y2",
+        url: "https://example.com/y2",
+        title: "Škoda Octavia 2.0 TDI",
+        make: "Škoda",
+        model: "Octavia",
+        year: 2010,
+        mileageKm: 60000,
+        price: 300000,
+        currency: "CZK",
+      },
+      { source: "bazos" }
+    );
+    const q: SearchQuery = {
+      yearFrom: 2015,
+      fuel: [],
+      body: [],
+      keywords: [],
+      excludeKeywords: [],
+      sources: [],
+    };
+    expect(matchesSearch(listing, q)).toBe(false);
+  });
+
+  it("a bazos listing with a null year still matches when the query has no year filter at all", () => {
+    const listing = listingWithNullYear("bazos");
+    const q: SearchQuery = { fuel: [], body: [], keywords: [], excludeKeywords: [], sources: [] };
+    expect(matchesSearch(listing, q)).toBe(true);
+  });
+});
+
 describe("isFeatureOnlyMismatch", () => {
   const baseListing = normalizeListing(
     {

@@ -2,6 +2,7 @@ import clsx from "clsx";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { NotConfigured } from "@/components/not-configured";
 import { ScrapeTrigger } from "@/components/scrape-trigger";
+import { NotificationsToggle } from "@/components/notifications-toggle";
 import { formatDateTime } from "@/lib/format";
 
 export const dynamic = "force-dynamic";
@@ -29,6 +30,14 @@ export default async function SourcesPage() {
           <p className="text-sm text-gray-500">Kdy který bazar naposledy fungoval a co vrátil.</p>
         </div>
         <ScrapeTrigger sources={enabledSources} />
+      </div>
+
+      <div className="card space-y-2">
+        <h2 className="section-title">Notifikace</h2>
+        <p className="text-sm text-gray-500">
+          Push notifikace do tohoto prohlížeče/zařízení — nová auta, zlevnění oblíbených a výpadky zdrojů.
+        </p>
+        <NotificationsToggle />
       </div>
 
       <div className="overflow-x-auto card">

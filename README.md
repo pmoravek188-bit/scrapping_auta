@@ -33,15 +33,20 @@ scrapping_auta/
   (žádná těžká UI knihovna). Přihlášení přes Supabase Auth magic link
   (`@supabase/ssr`), middleware chrání všechny stránky kromě `/login` a
   `/auth/callback`.
-- **Scraper**: TypeScript běžící v GitHub Actions (cron `0 5 * * *` = jednou denně v 7:00 letního času +
-  ruční spuštění s volitelným `source` inputem). Jeden job spustí všechny
-  zapnuté zdroje souběžně v procesu — pád jednoho zdroje nezastaví ostatní,
-  chyby se zapisují do `scrape_runs`.
-- **Notifikace**: pouze e-mail, přes Resend REST API (`fetch`, žádné SDK).
-  Posílá se souhrnný digest (HTML + textová záloha) s kartičkami aut po
-  jednotlivých hledáních, max. ~20 aut na hledání v jednom e-mailu. Bez
-  `RESEND_API_KEY`/`NOTIFY_EMAIL_TO` se notifikace tiše přeskočí (jen se
-  zaloguje).
+- **Scraper**: TypeScript běžící v GitHub Actions (cron `0 5,11,17 * * *` =
+  3× denně v 7/13/19 letního času + ruční spuštění s volitelným `source`
+  inputem). Jeden job spustí všechny zapnuté zdroje souběžně v procesu — pád
+  jednoho zdroje nezastaví ostatní, chyby se zapisují do `scrape_runs`. Běh
+  3× denně nijak nezvyšuje počet e-mailů/pushů — ty se posílají jen když
+  opravdu existuje něco nového k nahlášení (`notified_at is null`, viz
+  „Runner“ níže), nejvýš tedy 3 digesty denně a jen v dnech, kdy je co hlásit.
+- **Notifikace**: e-mail (Resend REST API, `fetch`, žádné SDK) + volitelný
+  Web Push do nainstalované PWA (viz „Web Push“ níže). Posílá se souhrnný
+  digest (HTML + textová záloha) s kartičkami aut po jednotlivých hledáních
+  a sekcí „Oblíbené: zlevnění / prodáno“, max. ~20 aut na hledání v jednom
+  e-mailu. Bez `RESEND_API_KEY`/`NOTIFY_EMAIL_TO` se e-mail tiše přeskočí
+  (jen se zaloguje); bez VAPID klíčů v `app_secrets` se push tiše přeskočí
+  stejně tak.
 
 ## Lokální vývoj
 
@@ -222,7 +227,15 @@ Zdroje se zapínají/vypínají v tabulce `sources` (sloupec `enabled`).
   jako jedno auto s „více nabídkami“.
 - **Matcher** (`matcher.ts`): rozhoduje, jestli normalizovaný inzerát
   odpovídá uloženému hledání — používá ho jak runner (nezávisle na tom, co
-  zdroj uměl filtrovat na serveru), tak testy.
+  zdroj uměl filtrovat na serveru), tak testy. Chybějící rok (`year: null`)
+  u filtru na rok je normálně zamítnutí — výjimka je `bazos`
+  (`YEAR_NULL_LENIENT_SOURCES`), protože tam rok často vůbec není na
+  výpisu a dá se jen odhadnout regexem z textu; u ostatních zdrojů chybějící
+  rok dál strict selže. Runner navíc pro `tipcars` (nemá žádný
+  server-side filtr na rok, viz komentář v `sources/tipcars.ts`) zvedá
+  limit stránek na 10 (místo sdíleného výchozího 5), když má hledání
+  `yearFrom`/`yearTo` — jinak by starší/novější shody mohly být za
+  hranicí výchozího limitu stránek.
 
 ## Výsledky (`/results`): scope, okamžitý rematch, „NOVÉ“
 
@@ -338,8 +351,16 @@ tento běh nenašel, opravdu zmizely ze zdroje — viz „Smazané inzeráty“ 
 Na konci celého běhu (ne při `--source`) se navíc smažou inzeráty, které
 neodpovídají žádnému hledání a nebyly viděné 3+ dny (`cleanupUnmatchedListings`)
 — `price_history`/`matches`/`favorites` mažou kaskádově; oblíbený inzerát se
-takto nikdy nesmaže (viz „Oblíbené“ níže). Na úplný závěr pošle e-mailový
-souhrn nových shod (`notified_at is null`) a označí je jako odeslané.
+takto nikdy nesmaže (viz „Oblíbené“ níže). Po dokončení všech zdrojů se pro každý z nich porovná `found` tohoto běhu
+s mediánem posledních 5 úspěšných běhů (`packages/scrapers/src/health-alert.ts`)
+— vrátil-li zdroj 0 (nebo selhal), přestože běžně vrací víc, pošle se
+e-mail + push „⚠️ zdroj … nevrací auta“, nejvýš 1× za 24 h na zdroj
+(`sources.last_alert_at`). Na úplný závěr pošle e-mailový souhrn nových
+shod (`notified_at is null`, viz výše — proto běh 3× denně neposílá víc
+e-mailů, jen rychleji doručí to nové) a označí je jako odeslané, dále
+push s „Nové auto: … / N nových aut pro …" vlastníkovi každého hledání, a
+zkontroluje oblíbené položky na zlevnění/zmizení
+(`packages/scrapers/src/favorites-alert.ts`) — viz „Oblíbené“ níže.
 
 ### Co se ukládá do databáze
 
@@ -398,6 +419,16 @@ aktuálně odpovídají nějakému hledání — oblíbený inzerát, který př
 odpovídat všem hledáním, si tedy podrží svůj poslední známý stav (cenu,
 `last_seen`, …), dokud ho zdroj sám nesmaže.
 
+**Upozornění na zlevnění/zmizení**: po každém běhu
+(`packages/scrapers/src/favorites-alert.ts`) se každá oblíbená položka
+zkontroluje — zlevnila oproti poslední nahlášené ceně, nebo nově zmizela
+(`gone_at` nastaveno)? Pokud ano, pošle se vlastníkovi push a přidá se
+řádek do sekce „Oblíbené: zlevnění / prodáno“ v e-mailovém digestu.
+Sledování „už nahlášeno“ (`favorites.last_notified_price`/
+`last_notified_gone_at`, viz migrace `20261003000100_favorites_notify_tracking.sql`)
+zajišťuje, že stejná změna nikdy nepřijde dvakrát — nová nižší cena nebo
+návrat inzerátu mezi aktivní pak „odemkne“ další upozornění v budoucnu.
+
 ## Smazané inzeráty
 
 Dřívější logika „neviděno 3+ dny → `is_active=false`“ byla nahrazena
@@ -439,6 +470,48 @@ Heuristiky pro `sauto`/`tipcars`/`bazos` vycházejí z tvaru jejich detailních
 URL (viz komentáře v `gone-detection.ts`), ale nebyly ověřeny živě proti
 skutečně smazanému inzerátu (žádný nebyl po ruce k otestování) — berte je
 jako rozumný odhad, ne jako 100% ověřené chování jako u zbytku adaptérů.
+
+## Web Push
+
+Push notifikace do nainstalované PWA (iOS 16.4+ po přidání na plochu,
+Android/desktop i bez instalace) pro: nové shody, zlevnění/zmizení
+oblíbených a upozornění na nefunkční zdroj. Nepřidává žádný nový GitHub
+Secret ani Vercel env var — VAPID klíče žijí v DB.
+
+**Jednorázové nastavení (dělá operátor/admin, ne kód):**
+
+1. Vygenerujte pár klíčů: `npx web-push generate-vapid-keys --json`.
+2. Veřejný klíč je natvrdo v `apps/web/lib/push.ts` (`VAPID_PUBLIC_KEY`) —
+   je to skutečně veřejná hodnota, bezpečná v klientském kódu.
+3. Soukromý klíč (a veřejný znovu, pro runner) vložte do `public.app_secrets`
+   (migrace `20261003000200_web_push.sql` tabulku jen zakládá, hodnoty do ní
+   schválně nevkládá):
+   ```sql
+   insert into public.app_secrets (key, value) values
+     ('vapid_public_key', '<veřejný klíč>'),
+     ('vapid_private_key', '<soukromý klíč>'),
+     ('vapid_subject', 'mailto:vas-kontakt@example.com')
+   on conflict (key) do update set value = excluded.value;
+   ```
+   `vapid_subject` je kontaktní e-mail posílaný push službám (FCM/Mozilla)
+   jako součást protokolu — dejte tam libovolnou adresu, kterou chcete mít
+   jako kontakt pro tyto služby, nemusí to být váš osobní účet.
+4. Bez těchto tří klíčů runner push tiše přeskočí (jen se zaloguje) — e-mail
+   notifikace fungují nezávisle na tom.
+
+**Jak to funguje:**
+
+- `apps/web/lib/push.ts`: `subscribeToPush`/`unsubscribeFromPush` —
+  požádá o `Notification` oprávnění, přihlásí se přes `PushManager` a uloží
+  `endpoint`/`p256dh`/`auth` do `public.push_subscriptions` (RLS: jen
+  vlastní řádky). Toggle "Notifikace" je na `/sources`
+  (`components/notifications-toggle.tsx`) — na iOS zobrazí hlášku, že push
+  funguje jen po přidání appky na plochu.
+- `apps/web/public/sw.js`: `push` handler zobrazí notifikaci z JSON payloadu
+  (`{title, body, url}`), `notificationclick` fokusne/otevře danou URL.
+- `packages/scrapers/src/push.ts`: čte VAPID klíče z `app_secrets`, posílá
+  přes `web-push`; odpověď 404/410 znamená mrtvou subscription a řádek se
+  rovnou smaže.
 
 ## Známá omezení / co zbývá
 

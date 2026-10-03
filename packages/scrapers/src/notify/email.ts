@@ -29,6 +29,15 @@ export interface NotifySearchGroup {
   listings: NotifyListing[];
 }
 
+/** One favourites-digest line item (see favorites-alert.ts): either a price
+ * drop or the listing becoming gone/sold. */
+export interface NotifyFavoriteChange extends NotifyListing {
+  kind: "price_drop" | "gone";
+  /** The price this favourite was previously tracked at — only meaningful
+   * for `kind: "price_drop"` (null for "gone"). */
+  previousPriceCzk: number | null;
+}
+
 export interface EmailNotifyConfig {
   apiKey: string;
   to: string;
@@ -108,8 +117,47 @@ function renderSearchSectionHtml(group: NotifySearchGroup): string {
   ${more}`;
 }
 
-export function renderDigestHtml(groups: NotifySearchGroup[]): string {
+function renderFavoriteChangeCardHtml(change: NotifyFavoriteChange): string {
+  const priceLine =
+    change.kind === "gone"
+      ? `<span style="color:#991b1b;font-weight:600">Prodáno / nedostupné</span>`
+      : `<span style="color:#0a7d3b;font-weight:700">${formatCzk(change.priceCzk)}</span> ` +
+        `<span style="color:#999;text-decoration:line-through">${formatCzk(change.previousPriceCzk)}</span>`;
+  const resolvedImg = resolveImageUrl(change.imageUrl, "email");
+  const img = resolvedImg
+    ? `<img src="${escapeHtml(resolvedImg)}" alt="" width="96" height="72" style="object-fit:cover;border-radius:8px;display:block" />`
+    : `<div style="width:96px;height:72px;border-radius:8px;background:#e5e7eb"></div>`;
+  return `
+  <tr>
+    <td style="padding:8px 0;border-bottom:1px solid #eee">
+      <table role="presentation" width="100%" cellpadding="0" cellspacing="0">
+        <tr>
+          <td width="96" style="vertical-align:top">${img}</td>
+          <td style="padding-left:12px;vertical-align:top">
+            <a href="${escapeHtml(change.url)}" style="font-size:15px;font-weight:600;color:#111;text-decoration:none">${escapeHtml(change.title)}</a>
+            <div style="font-size:13px;color:#666;margin-top:2px">${escapeHtml(change.source)}</div>
+            <div style="font-size:15px;margin-top:4px">${priceLine}</div>
+          </td>
+        </tr>
+      </table>
+    </td>
+  </tr>`;
+}
+
+function renderFavoritesSectionHtml(changes: NotifyFavoriteChange[]): string {
+  if (changes.length === 0) return "";
+  const rows = changes.map(renderFavoriteChangeCardHtml).join("\n");
+  return `
+  <h2 style="font-size:17px;margin:24px 0 8px">Oblíbené: zlevnění / prodáno (${changes.length})</h2>
+  <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>`;
+}
+
+export function renderDigestHtml(
+  groups: NotifySearchGroup[],
+  favoriteChanges: NotifyFavoriteChange[] = []
+): string {
   const sections = groups.map(renderSearchSectionHtml).join("\n");
+  const favoritesSection = renderFavoritesSectionHtml(favoriteChanges);
   return `<!doctype html>
 <html lang="cs">
   <body style="margin:0;padding:24px;background:#f5f5f5;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111">
@@ -118,13 +166,17 @@ export function renderDigestHtml(groups: NotifySearchGroup[]): string {
         <h1 style="font-size:20px;margin:0 0 4px">Nové nabídky aut</h1>
         <p style="font-size:13px;color:#666;margin:0 0 16px">Scrapping auta — automatické hlídání inzerátů</p>
         ${sections}
+        ${favoritesSection}
       </td></tr>
     </table>
   </body>
 </html>`;
 }
 
-export function renderDigestText(groups: NotifySearchGroup[]): string {
+export function renderDigestText(
+  groups: NotifySearchGroup[],
+  favoriteChanges: NotifyFavoriteChange[] = []
+): string {
   const lines: string[] = ["Nové nabídky aut", ""];
   for (const group of groups) {
     lines.push(`${group.searchName} (${group.listings.length})`);
@@ -142,16 +194,31 @@ export function renderDigestText(groups: NotifySearchGroup[]): string {
     }
     lines.push("");
   }
+  if (favoriteChanges.length > 0) {
+    lines.push(`Oblíbené: zlevnění / prodáno (${favoriteChanges.length})`);
+    for (const change of favoriteChanges) {
+      const priceText =
+        change.kind === "gone"
+          ? "Prodáno / nedostupné"
+          : `${formatCzk(change.priceCzk)} (dřív ${formatCzk(change.previousPriceCzk)})`;
+      lines.push(`- ${change.title} — ${priceText}`);
+      lines.push(`  ${change.url}`);
+    }
+    lines.push("");
+  }
   return lines.join("\n");
 }
 
 /**
- * Sends the new-matches digest email via Resend. No-ops (with a log line) if
- * RESEND_API_KEY / NOTIFY_EMAIL_TO are not configured, or there is nothing
- * to send.
+ * Sends the new-matches + favourites-changes digest email via Resend. No-ops
+ * (with a log line) if RESEND_API_KEY / NOTIFY_EMAIL_TO are not configured,
+ * or there is nothing at all to send. `favoriteChanges` (see
+ * favorites-alert.ts) is rendered as an extra "Oblíbené: zlevnění / prodáno"
+ * section — on its own it can still trigger a send even with no new matches.
  */
 export async function sendMatchDigestEmail(
   groups: NotifySearchGroup[],
+  favoriteChanges: NotifyFavoriteChange[] = [],
   config: EmailNotifyConfig | null = getEmailConfigFromEnv()
 ): Promise<boolean> {
   if (!config) {
@@ -159,12 +226,16 @@ export async function sendMatchDigestEmail(
     return false;
   }
   const nonEmpty = groups.filter((g) => g.listings.length > 0);
-  if (nonEmpty.length === 0) {
-    console.log("[notify:email] no new matches, nothing to send");
+  if (nonEmpty.length === 0 && favoriteChanges.length === 0) {
+    console.log("[notify:email] no new matches or favourite changes, nothing to send");
     return false;
   }
   const totalCars = nonEmpty.reduce((sum, g) => sum + g.listings.length, 0);
-  const subject = `Scrapping auta: ${totalCars} nových nabídek`;
+  const subjectParts = [
+    totalCars > 0 ? `${totalCars} nových nabídek` : null,
+    favoriteChanges.length > 0 ? `${favoriteChanges.length} změn v oblíbených` : null,
+  ].filter((p): p is string => Boolean(p));
+  const subject = `Scrapping auta: ${subjectParts.join(", ")}`;
 
   const res = await fetch(RESEND_ENDPOINT, {
     method: "POST",
@@ -176,8 +247,8 @@ export async function sendMatchDigestEmail(
       from: config.from,
       to: [config.to],
       subject,
-      html: renderDigestHtml(nonEmpty),
-      text: renderDigestText(nonEmpty),
+      html: renderDigestHtml(nonEmpty, favoriteChanges),
+      text: renderDigestText(nonEmpty, favoriteChanges),
     }),
   });
 
@@ -187,5 +258,61 @@ export async function sendMatchDigestEmail(
     return false;
   }
   console.log(`[notify:email] sent digest for ${nonEmpty.length} searches, ${totalCars} cars`);
+  return true;
+}
+
+/**
+ * Sends the "source looks broken" alert e-mail (see
+ * packages/scrapers/src/health-alert.ts for the decision logic that calls
+ * this — it's already rate-limited to at most once per source per 24h
+ * before this is ever called). No-ops (with a log line) if RESEND_API_KEY /
+ * NOTIFY_EMAIL_TO are not configured, same as the match digest.
+ */
+export async function sendSourceAlertEmail(
+  sourceName: string,
+  config: EmailNotifyConfig | null = getEmailConfigFromEnv()
+): Promise<boolean> {
+  if (!config) {
+    console.log("[notify:email] RESEND_API_KEY / NOTIFY_EMAIL_TO not set, skipping source alert");
+    return false;
+  }
+  const subject = `⚠️ Scrapping cars: zdroj ${sourceName} nevrací auta`;
+  const text =
+    `Zdroj "${sourceName}" v posledním běhu scraperu nevrátil žádné auto (nebo selhal), ` +
+    `přestože obvykle vrací víc. Zkontrolujte stránku „Stav zdrojů" v appce — mohlo dojít ` +
+    `ke změně webu, bloku, nebo chybě scraperu.`;
+  const html = `<!doctype html>
+<html lang="cs">
+  <body style="margin:0;padding:24px;background:#f5f5f5;font-family:-apple-system,Segoe UI,Roboto,Arial,sans-serif;color:#111">
+    <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#fff;border-radius:12px;padding:24px">
+      <tr><td>
+        <h1 style="font-size:18px;margin:0 0 12px">⚠️ Zdroj ${escapeHtml(sourceName)} nevrací auta</h1>
+        <p style="font-size:14px;color:#333;margin:0">${escapeHtml(text)}</p>
+      </td></tr>
+    </table>
+  </body>
+</html>`;
+
+  const res = await fetch(RESEND_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({
+      from: config.from,
+      to: [config.to],
+      subject,
+      html,
+      text,
+    }),
+  });
+
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    console.warn(`[notify:email] Resend API returned ${res.status} for source alert: ${body}`);
+    return false;
+  }
+  console.log(`[notify:email] sent source health alert for "${sourceName}"`);
   return true;
 }
