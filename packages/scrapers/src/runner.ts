@@ -18,6 +18,7 @@ import { sendMatchDigestEmail, type NotifySearchGroup } from "./notify/email.js"
 import { fetchForGoneCheck, MAX_RESULT_PAGES } from "./http.js";
 import { selectListingsToStore } from "./selection.js";
 import { isGone } from "./gone-detection.js";
+import { checkListingsHaveLoadableImages, IMAGE_CHECK_CONCURRENCY } from "./image-check.js";
 
 export type DbClient = SupabaseClient<Database>;
 
@@ -66,6 +67,13 @@ export const DETAIL_CACHE_MAX_AGE_DAYS = 14;
 const PER_SOURCE_MAX_PAGES: Partial<Record<string, number>> = {
   autoscout24: 15,
 };
+/** Per source, per run — caps how many listings get a real "does the image
+ * load?" network check (see `filterListingsWithLoadableImages` below). A
+ * listing past this cap isn't confirmed either way this run, so — same
+ * fail-open philosophy as the gone-check's circuit breaker — it's kept
+ * rather than dropped; it'll be checked (as "new", since it's still not in
+ * the DB yet) again next run. */
+export const MAX_IMAGE_CHECKS_PER_SOURCE_PER_RUN = 150;
 
 export interface RunOptions {
   dryRun?: boolean;
@@ -254,6 +262,97 @@ export async function enrichNearMatches(
   );
 }
 
+function sameImageUrls(a: readonly string[], b: readonly string[]): boolean {
+  if (a.length !== b.length) return false;
+  return a.every((url, i) => url === b[i]);
+}
+
+/**
+ * Product decision (see README "Co se ukládá do databáze"): a listing
+ * without even one loadable photo isn't stored at all — see
+ * image-check.ts for the actual "does this URL load" network check.
+ *
+ *   1. No `imageUrls` at all -> always dropped, no network call needed.
+ *   2. Already in the DB, with the exact same `imageUrls` as last run ->
+ *      never re-checked (its image already passed, or was never checked
+ *      before this feature existed — either way, re-checking a huge
+ *      existing backlog every run would be wasteful and isn't the point;
+ *      the point is to stop a *new* broken-image listing from ever landing
+ *      in the first place).
+ *   3. New (not yet in the DB) or existing-but-`imageUrls`-changed ->
+ *      checked for real, capped at `MAX_IMAGE_CHECKS_PER_SOURCE_PER_RUN`
+ *      and run with `IMAGE_CHECK_CONCURRENCY` at a time. A listing that
+ *      doesn't make the cap this run is kept (fail-open, same as the
+ *      gone-check's circuit breaker) — it's still "new" next run, so it'll
+ *      get its turn.
+ *
+ * Runs in dry-run (no `db`) too, so it's testable with `--query` — every
+ * listing is then treated as "new" (there's no persisted state to diff
+ * against), still capped the same way.
+ */
+export async function filterListingsWithLoadableImages(
+  db: DbClient | null,
+  sourceId: string,
+  listings: Listing[]
+): Promise<Listing[]> {
+  const withImages = listings.filter((l) => l.imageUrls.length > 0);
+  const droppedNoImage = listings.length - withImages.length;
+
+  const existingImageUrlsBySourceId = new Map<string, string[]>();
+  if (db && withImages.length > 0) {
+    const { data, error } = await db
+      .from("listings")
+      .select("source_id, image_urls")
+      .eq("source", sourceId)
+      .in(
+        "source_id",
+        withImages.map((l) => l.sourceId)
+      );
+    if (error) {
+      console.warn(`[runner] ${sourceId}: image-check existing-lookup failed:`, error.message);
+    } else {
+      for (const row of data ?? []) {
+        existingImageUrlsBySourceId.set(row.source_id, row.image_urls ?? []);
+      }
+    }
+  }
+
+  const needsCheck: Listing[] = [];
+  const skipsCheck: Listing[] = [];
+  for (const listing of withImages) {
+    const existingUrls = existingImageUrlsBySourceId.get(listing.sourceId);
+    const isNew = db != null && existingUrls === undefined;
+    const changed = existingUrls !== undefined && !sameImageUrls(existingUrls, listing.imageUrls);
+    if (!db || isNew || changed) {
+      needsCheck.push(listing);
+    } else {
+      skipsCheck.push(listing);
+    }
+  }
+
+  const toCheck = needsCheck.slice(0, MAX_IMAGE_CHECKS_PER_SOURCE_PER_RUN);
+  const uncheckedOverCap = needsCheck.slice(MAX_IMAGE_CHECKS_PER_SOURCE_PER_RUN);
+
+  const results =
+    toCheck.length > 0
+      ? await checkListingsHaveLoadableImages(
+          toCheck.map((l) => l.imageUrls),
+          IMAGE_CHECK_CONCURRENCY
+        )
+      : [];
+  const checkedOk = toCheck.filter((_, i) => results[i]);
+  const droppedBrokenImage = toCheck.length - checkedOk.length;
+
+  console.log(
+    `[runner] ${sourceId}: image-check — ${droppedNoImage} dropped (no image URL), ` +
+      `${skipsCheck.length} unchanged (skipped check), ${toCheck.length} checked ` +
+      `(cap ${MAX_IMAGE_CHECKS_PER_SOURCE_PER_RUN}), ${droppedBrokenImage} dropped (image doesn't load), ` +
+      `${uncheckedOverCap.length} over cap (kept, unchecked)`
+  );
+
+  return [...skipsCheck, ...checkedOk, ...uncheckedOverCap];
+}
+
 export async function runScrape(opts: RunOptions = {}): Promise<void> {
   const dryRun = Boolean(opts.dryRun);
   const supabaseUrl = opts.supabaseUrl ?? process.env.SUPABASE_URL;
@@ -389,11 +488,18 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
       // (selection, matching, upsert) automatically benefits.
       await enrichNearMatches(db, sourceId, adapter, normalized, searchQueriesForSource);
 
-      const toStore = selectListingsToStore(normalized, searchQueriesForSource);
+      const matchedSearch = selectListingsToStore(normalized, searchQueriesForSource);
+      // Product decision: a listing with no loadable image never gets
+      // stored/matched/notified at all (see README) — see
+      // filterListingsWithLoadableImages's doc comment. Runs in dry-run too
+      // (with no `db`, every listing is treated as "new") so `--query` stays
+      // a faithful preview of what a real run would do.
+      const toStore = await filterListingsWithLoadableImages(db, sourceId, matchedSearch);
 
       if (dryRun || !db) {
         console.log(
-          `[runner] [dry-run] ${sourceId}: fetched ${normalized.length}, ${toStore.length} match a saved search (would be stored)`
+          `[runner] [dry-run] ${sourceId}: fetched ${normalized.length}, ${matchedSearch.length} match a saved search, ` +
+            `${toStore.length} have a loadable image (would be stored)`
         );
         for (const listing of toStore.slice(0, 5)) {
           console.log(

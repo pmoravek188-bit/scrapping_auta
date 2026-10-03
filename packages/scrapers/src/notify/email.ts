@@ -8,6 +8,8 @@
  * see README for details.
  */
 
+import { resolveImageUrl } from "@scrapping-auta/core";
+
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const MAX_CARS_PER_EMAIL = 20;
 
@@ -66,8 +68,15 @@ function renderCarCardHtml(listing: NotifyListing): string {
   ]
     .filter(Boolean)
     .join(" · ");
-  const img = listing.imageUrl
-    ? `<img src="${escapeHtml(listing.imageUrl)}" alt="" width="96" height="72" style="object-fit:cover;border-radius:8px;display:block" />`
+  // "email" size (not "card"): several source CDNs serve WebP, which many
+  // mail clients (Outlook, some Apple Mail builds) and Gmail's own image
+  // proxy don't render — resolveImageUrl(..., "email") picks a JPEG variant
+  // where one exists, and returns null (-> the grey placeholder box, not a
+  // silently-broken <img>) where it doesn't. See image-url.ts for the
+  // per-source verification.
+  const resolvedImg = resolveImageUrl(listing.imageUrl, "email");
+  const img = resolvedImg
+    ? `<img src="${escapeHtml(resolvedImg)}" alt="" width="96" height="72" style="object-fit:cover;border-radius:8px;display:block" />`
     : `<div style="width:96px;height:72px;border-radius:8px;background:#e5e7eb"></div>`;
   return `
   <tr>

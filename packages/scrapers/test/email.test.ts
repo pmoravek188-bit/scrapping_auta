@@ -49,6 +49,80 @@ describe("renderDigestHtml / renderDigestText", () => {
     expect(text).toContain("Škoda Octavia 2.0 TDI");
     expect(text).toContain("https://example.com/1");
   });
+
+  it("resolves the image through resolveImageUrl's 'email' size, not the raw URL", () => {
+    // A raw autoscout24 URL (as stored in image_urls / listing.imageUrl)
+    // ends in /250x188.webp -- most mail clients (Outlook, some Apple Mail
+    // builds) and Gmail's own proxy don't reliably render WebP, so the
+    // email must use the confirmed-live JPEG variant instead.
+    const html = renderDigestHtml([
+      {
+        searchName: "AutoScout",
+        listings: [
+          {
+            title: "BMW 320d",
+            url: "https://example.com/bmw",
+            source: "autoscout24",
+            priceCzk: 500000,
+            year: 2020,
+            mileageKm: 50000,
+            fuel: "diesel",
+            imageUrl:
+              "https://prod.pictures.autoscout24.net/listing-images/abc_def.jpg/250x188.webp",
+          },
+        ],
+      },
+    ]);
+    expect(html).toContain(
+      "https://prod.pictures.autoscout24.net/listing-images/abc_def.jpg/480x360.jpg"
+    );
+    expect(html).not.toContain("250x188.webp");
+  });
+
+  it("keeps the webp image for a CDN with no JPEG variant", () => {
+    // aaaauto's vshcdn.net CDN only serves WebP (confirmed live). Gmail and
+    // Apple Mail render WebP, so the image is kept rather than dropped.
+    const html = renderDigestHtml([
+      {
+        searchName: "AAA Auto",
+        listings: [
+          {
+            title: "Ford Focus",
+            url: "https://example.com/focus",
+            source: "aaaauto",
+            priceCzk: 300000,
+            year: 2018,
+            mileageKm: 80000,
+            fuel: "benzin",
+            imageUrl: "https://aaaautoeuimg.vshcdn.net/thumb/900591757_1024x768x95.jpg",
+          },
+        ],
+      },
+    ]);
+    expect(html).toContain('<img src="https://aaaautoeuimg.vshcdn.net/thumb/900591757_1024x768x95.jpg"');
+  });
+
+  it("falls back to the placeholder when the listing has no image at all", () => {
+    const html = renderDigestHtml([
+      {
+        searchName: "x",
+        listings: [
+          {
+            title: "No photo",
+            url: "https://example.com/no-photo",
+            source: "bazos",
+            priceCzk: 100000,
+            year: null,
+            mileageKm: null,
+            fuel: null,
+            imageUrl: null,
+          },
+        ],
+      },
+    ]);
+    expect(html).not.toContain("<img");
+    expect(html).toContain("background:#e5e7eb");
+  });
 });
 
 describe("sendMatchDigestEmail", () => {

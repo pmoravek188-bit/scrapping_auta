@@ -56,6 +56,7 @@ export function ResultRow({
       favorite={favorite}
       onHide={matchId ? hide : undefined}
       hideBusy={busy}
+      hideOnImageError
     />
   );
 }

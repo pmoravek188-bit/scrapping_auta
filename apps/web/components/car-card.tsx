@@ -7,6 +7,7 @@ import { FUEL_ICONS } from "@/lib/icons";
 import { FavoriteButton } from "@/components/favorite-button";
 import { HideButton } from "@/components/hide-button";
 import { CarImage } from "@/components/car-image";
+import { HideOnImageError } from "@/components/hide-on-image-error";
 
 export interface CarCardListing {
   id: string;
@@ -33,6 +34,7 @@ export function CarCard({
   className,
   onHide,
   hideBusy,
+  hideOnImageError,
 }: {
   listing: CarCardListing;
   /** No longer used by CarCard itself (favourites are a standalone
@@ -49,8 +51,16 @@ export function CarCard({
    * a `matches` row, which only exists in the "Moje hledání" scope). */
   onHide?: () => void;
   hideBusy?: boolean;
+  /** When true, a listing with no image at all isn't rendered, and one
+   * whose image fails to load in the browser hides the whole card instead
+   * of falling back to a placeholder icon. Used on the dashboard/results
+   * pages ("don't show me listings I can't see a photo of" — see README);
+   * left `false` (default, placeholder icon) on favorites/listing-detail,
+   * since the user saved/is looking at that listing on purpose. */
+  hideOnImageError?: boolean;
 }) {
   const img = resolveImageUrl(listing.image_urls?.[0], "card");
+  if (hideOnImageError && !img) return null;
   const FuelIcon = listing.fuel ? FUEL_ICONS[listing.fuel as keyof typeof FUEL_ICONS] : null;
 
   const specs = [
@@ -65,7 +75,7 @@ export function CarCard({
     listing.power_kw ? { icon: undefined, text: `${listing.power_kw} kW` } : null,
   ].filter(Boolean) as { icon?: typeof Calendar; text: string }[];
 
-  return (
+  const card = (
     <div
       className={clsx(
         "group overflow-hidden rounded-xl border border-gray-200 bg-white shadow-card transition hover:-translate-y-0.5 hover:shadow-card-hover",
@@ -150,4 +160,6 @@ export function CarCard({
       </div>
     </div>
   );
+
+  return hideOnImageError ? <HideOnImageError>{card}</HideOnImageError> : card;
 }

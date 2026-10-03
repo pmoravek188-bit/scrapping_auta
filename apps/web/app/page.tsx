@@ -82,7 +82,12 @@ export default async function DashboardPage() {
                 {r.searches && (
                   <div className="mb-1.5 text-xs font-medium text-gray-400">{r.searches.name}</div>
                 )}
-                <CarCard listing={r.listings!} matchId={r.id} favorite={favoriteIds.has(r.listings!.id)} />
+                <CarCard
+                  listing={r.listings!}
+                  matchId={r.id}
+                  favorite={favoriteIds.has(r.listings!.id)}
+                  hideOnImageError
+                />
               </div>
             ))}
         </div>

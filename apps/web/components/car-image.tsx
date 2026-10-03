@@ -3,6 +3,7 @@
 import { useState } from "react";
 import { ImageOff } from "lucide-react";
 import clsx from "clsx";
+import { useReportImageError } from "@/components/hide-on-image-error";
 
 /**
  * Renders a listing photo with a graceful fallback to the "no image" icon
@@ -10,6 +11,11 @@ import clsx from "clsx";
  * `onError`, a DOM event handler, so it must be a Client Component — the
  * callers (`car-card.tsx`, `listing-gallery.tsx`) render as Server
  * Components on some pages and can't attach one directly.
+ *
+ * When rendered inside a `HideOnImageError` wrapper (see that file), a load
+ * failure ALSO reports up to it so the whole card can hide itself, in
+ * addition to this component's own local placeholder-icon fallback — see
+ * car-card.tsx for which pages wrap it and which don't.
  */
 export function CarImage({
   src,
@@ -23,6 +29,7 @@ export function CarImage({
   iconClassName?: string;
 }) {
   const [failed, setFailed] = useState(false);
+  const reportImageError = useReportImageError();
 
   if (!src || failed) {
     return (
@@ -39,7 +46,10 @@ export function CarImage({
       loading="lazy"
       referrerPolicy="no-referrer"
       className={className}
-      onError={() => setFailed(true)}
+      onError={() => {
+        setFailed(true);
+        reportImageError?.();
+      }}
     />
   );
 }
