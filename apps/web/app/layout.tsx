@@ -7,11 +7,11 @@ import { ServiceWorkerRegister } from "@/components/service-worker-register";
 const inter = Inter({ subsets: ["latin", "latin-ext"], variable: "--font-inter" });
 
 export const metadata: Metadata = {
-  title: "Scrapping auta",
+  title: "Scrapping cars",
   description: "Hlídání inzerátů s ojetými auty napříč bazary",
   appleWebApp: {
     capable: true,
-    title: "Auta",
+    title: "Cars",
     statusBarStyle: "default",
   },
   other: {

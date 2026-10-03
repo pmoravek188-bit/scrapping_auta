@@ -37,7 +37,7 @@ function LoginShell({ children }: { children: React.ReactNode }) {
       <div className="w-full max-w-md">
         <div className="mb-6 flex items-center justify-center gap-2 text-xl font-bold text-gray-900">
           <Car className="h-7 w-7 text-brand-600" aria-hidden />
-          Scrapping auta
+          Scrapping cars
         </div>
         {children}
       </div>

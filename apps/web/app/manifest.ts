@@ -2,8 +2,8 @@ import type { MetadataRoute } from "next";
 
 export default function manifest(): MetadataRoute.Manifest {
   return {
-    name: "Scrapping auta",
-    short_name: "Auta",
+    name: "Scrapping cars",
+    short_name: "Cars",
     description: "Hlídání inzerátů s ojetými auty napříč bazary",
     lang: "cs",
     start_url: "/results",
