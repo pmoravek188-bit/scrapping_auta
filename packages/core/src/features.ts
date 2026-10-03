@@ -88,6 +88,11 @@ export const FEATURE_GROUPS: FeatureGroup[] = [
     label: "1. majitel",
     synonyms: ["1. majitel", "1 majitel", "první majitel", "1.maj", "1maj"],
   },
+  {
+    id: "msport",
+    label: "BMW M Sport",
+    synonyms: ["m sport", "msport", "m sportpaket", "m paket", "m package", "m packet", "m sport pro"],
+  },
 ];
 
 /**
