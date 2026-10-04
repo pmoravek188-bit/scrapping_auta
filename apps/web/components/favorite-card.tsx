@@ -2,28 +2,27 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import { Trash2, TrendingDown, TrendingUp, Pencil } from "lucide-react";
+import { Trash2, TrendingDown, TrendingUp } from "lucide-react";
 import { CarCard, type CarCardListing } from "@/components/car-card";
+import { FavoriteStatusEditor } from "@/components/favorite-status-editor";
 import { createSupabaseBrowserClient } from "@/lib/supabase/client";
-import { formatCzk, formatDate } from "@/lib/format";
+import { formatCzk, formatDate, type FavoriteStatus } from "@/lib/format";
 
 export interface FavoriteCardData {
   listing: CarCardListing & { is_active: boolean };
   createdAt: string;
   note: string | null;
+  status: FavoriteStatus;
   /** First known price at/after the favourite was added, for the "change
    * since added" indicator. Null when there's no price history for that
    * window (e.g. price never changed since). */
   priceAtAdd: number | null;
 }
 
-export function FavoriteCard({ listing, createdAt, note, priceAtAdd }: FavoriteCardData) {
+export function FavoriteCard({ listing, createdAt, note, status, priceAtAdd }: FavoriteCardData) {
   const router = useRouter();
   const [removed, setRemoved] = useState(false);
   const [busy, setBusy] = useState(false);
-  const [editingNote, setEditingNote] = useState(false);
-  const [noteValue, setNoteValue] = useState(note ?? "");
-  const [savingNote, setSavingNote] = useState(false);
 
   async function remove() {
     const supabase = createSupabaseBrowserClient();
@@ -33,21 +32,6 @@ export function FavoriteCard({ listing, createdAt, note, priceAtAdd }: FavoriteC
     setBusy(false);
     if (!error) {
       setRemoved(true);
-      router.refresh();
-    }
-  }
-
-  async function saveNote() {
-    const supabase = createSupabaseBrowserClient();
-    if (!supabase) return;
-    setSavingNote(true);
-    const { error } = await supabase
-      .from("favorites")
-      .update({ note: noteValue.trim() || null })
-      .eq("listing_id", listing.id);
-    setSavingNote(false);
-    if (!error) {
-      setEditingNote(false);
       router.refresh();
     }
   }
@@ -92,41 +76,7 @@ export function FavoriteCard({ listing, createdAt, note, priceAtAdd }: FavoriteC
           </div>
         )}
 
-        {editingNote ? (
-          <div className="flex flex-col gap-1.5">
-            <textarea
-              value={noteValue}
-              onChange={(e) => setNoteValue(e.target.value)}
-              rows={2}
-              className="input text-xs"
-              placeholder="Poznámka…"
-            />
-            <div className="flex gap-2">
-              <button type="button" onClick={saveNote} disabled={savingNote} className="btn-secondary py-1 text-xs">
-                Uložit
-              </button>
-              <button
-                type="button"
-                onClick={() => {
-                  setEditingNote(false);
-                  setNoteValue(note ?? "");
-                }}
-                className="btn-ghost py-1 text-xs"
-              >
-                Zrušit
-              </button>
-            </div>
-          </div>
-        ) : (
-          <button
-            type="button"
-            onClick={() => setEditingNote(true)}
-            className="inline-flex items-center gap-1 text-gray-400 hover:text-gray-600"
-          >
-            <Pencil className="h-3 w-3" aria-hidden />
-            {note ? note : "Přidat poznámku"}
-          </button>
-        )}
+        <FavoriteStatusEditor listingId={listing.id} status={status} note={note} />
       </div>
     </div>
   );

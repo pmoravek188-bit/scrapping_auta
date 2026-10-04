@@ -1,13 +1,16 @@
 import Link from "next/link";
 import { Calendar, Gauge, MapPin, TrendingDown, Layers, Sparkles } from "lucide-react";
 import clsx from "clsx";
-import { resolveImageUrl } from "@scrapping-auta/core";
-import { formatCzk, formatKm, FUEL_LABELS, TRANSMISSION_LABELS } from "@/lib/format";
+import { resolveImageUrl, type PriceEvaluation, type ListingHistorySummary } from "@scrapping-auta/core";
+import { formatCzk, formatKm, formatOtherSitesCount, FUEL_LABELS, TRANSMISSION_LABELS } from "@/lib/format";
 import { FUEL_ICONS } from "@/lib/icons";
 import { FavoriteButton } from "@/components/favorite-button";
+import { CompareToggle } from "@/components/compare-toggle";
 import { HideButton } from "@/components/hide-button";
 import { CarImage } from "@/components/car-image";
 import { HideOnImageError } from "@/components/hide-on-image-error";
+import { PriceBadge } from "@/components/price-badge";
+import { ListingHistoryLine } from "@/components/listing-history-line";
 
 export interface CarCardListing {
   id: string;
@@ -26,6 +29,14 @@ export interface CarCardListing {
   group_offer_count?: number;
   price_dropped?: boolean;
   is_new?: boolean;
+  /** Task: price-evaluation badge ("Výhodná cena" / "Cena odpovídá" /
+   * "Drahé") — see packages/core/src/price-evaluation.ts and
+   * apps/web/lib/price-evaluation.server.ts. Undefined when there weren't
+   * enough comparables (or the listing has no make/model/price). */
+  priceEvaluation?: PriceEvaluation;
+  /** Task: "inzerováno N dní · zlevněno M× (−X Kč)" — see
+   * packages/core/src/listing-history.ts. */
+  history?: ListingHistorySummary;
 }
 
 export function CarCard({
@@ -104,7 +115,7 @@ export function CarCard({
             {listing.group_offer_count && listing.group_offer_count > 1 && (
               <span className="badge bg-white/90 text-gray-700 shadow-sm">
                 <Layers className="h-3 w-3" aria-hidden />
-                více nabídek ({listing.group_offer_count})
+                {formatOtherSitesCount(listing.group_offer_count - 1)}
               </span>
             )}
             {listing.price_dropped && (
@@ -134,6 +145,7 @@ export function CarCard({
               needs a `matches` row — it's shown on every listing. */}
           <div className="absolute right-2 top-2 flex items-center gap-1.5">
             <FavoriteButton listingId={listing.id} initialFavorite={!!favorite} />
+            <CompareToggle listingId={listing.id} />
             {onHide && <HideButton onHide={onHide} busy={hideBusy} />}
           </div>
         </div>
@@ -156,7 +168,11 @@ export function CarCard({
             {listing.location}
           </div>
         )}
-        <div className="mt-2 text-lg font-bold text-gray-900">{formatCzk(listing.price_czk)}</div>
+        <div className="mt-2 flex flex-wrap items-center gap-2">
+          <span className="text-lg font-bold text-gray-900">{formatCzk(listing.price_czk)}</span>
+          {listing.priceEvaluation && <PriceBadge evaluation={listing.priceEvaluation} />}
+        </div>
+        {listing.history && <ListingHistoryLine history={listing.history} className="mt-1 text-xs text-gray-400" />}
       </div>
     </div>
   );

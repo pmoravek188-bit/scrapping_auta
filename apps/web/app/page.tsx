@@ -1,9 +1,11 @@
 import Link from "next/link";
 import { Search } from "lucide-react";
+import { summarizeListingHistory } from "@scrapping-auta/core";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { NotConfigured } from "@/components/not-configured";
 import { CarCard } from "@/components/car-card";
 import { ScrapeTrigger } from "@/components/scrape-trigger";
+import { fetchPriceEvaluations } from "@/lib/price-evaluation.server";
 
 export const dynamic = "force-dynamic";
 
@@ -35,6 +37,8 @@ export default async function DashboardPage() {
       title: string;
       url: string;
       source: string;
+      make: string | null;
+      model: string | null;
       price_czk: number | null;
       year: number | null;
       mileage_km: number | null;
@@ -43,8 +47,21 @@ export default async function DashboardPage() {
       power_kw: number | null;
       location: string | null;
       image_urls: string[];
+      first_seen: string;
     } | null;
   }>;
+
+  const listingsForEval = rows
+    .filter((r) => r.listings)
+    .map((r) => ({
+      id: r.listings!.id,
+      make: r.listings!.make,
+      model: r.listings!.model,
+      year: r.listings!.year,
+      mileageKm: r.listings!.mileage_km,
+      priceCzk: r.listings!.price_czk,
+    }));
+  const priceEvaluations = await fetchPriceEvaluations(supabase, listingsForEval);
 
   return (
     <div>
@@ -83,7 +100,22 @@ export default async function DashboardPage() {
                   <div className="mb-1.5 text-xs font-medium text-gray-400">{r.searches.name}</div>
                 )}
                 <CarCard
-                  listing={r.listings!}
+                  listing={{
+                    id: r.listings!.id,
+                    title: r.listings!.title,
+                    url: r.listings!.url,
+                    source: r.listings!.source,
+                    price_czk: r.listings!.price_czk,
+                    year: r.listings!.year,
+                    mileage_km: r.listings!.mileage_km,
+                    fuel: r.listings!.fuel,
+                    transmission: r.listings!.transmission,
+                    power_kw: r.listings!.power_kw,
+                    location: r.listings!.location,
+                    image_urls: r.listings!.image_urls,
+                    priceEvaluation: priceEvaluations.get(r.listings!.id),
+                    history: summarizeListingHistory(r.listings!.first_seen, []),
+                  }}
                   matchId={r.id}
                   favorite={favoriteIds.has(r.listings!.id)}
                   hideOnImageError

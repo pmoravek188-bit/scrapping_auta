@@ -188,6 +188,7 @@ export interface Database {
           listing_id: string;
           created_at: string;
           note: string | null;
+          status: "none" | "volal" | "prohlidka" | "zamitnuto" | "koupeno";
           last_notified_price: number | null;
           last_notified_gone_at: string | null;
         };
