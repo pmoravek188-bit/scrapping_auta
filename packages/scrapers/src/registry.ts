@@ -9,6 +9,7 @@ import { havexAdapter } from "./sources/havex.js";
 import { autoesaAdapter } from "./sources/autoesa.js";
 import { skodaplusAdapter } from "./sources/skodaplus.js";
 import { autoscout24Adapter } from "./sources/autoscout24.js";
+import { autobazarAdapter } from "./sources/autobazar.js";
 
 /** All known adapters, keyed by source id (matches the `sources` table). */
 export const ADAPTERS: Record<string, SourceAdapter> = {
@@ -22,6 +23,7 @@ export const ADAPTERS: Record<string, SourceAdapter> = {
   autoesa: autoesaAdapter,
   skodaplus: skodaplusAdapter,
   autoscout24: autoscout24Adapter,
+  autobazar: autobazarAdapter,
 };
 
 export function getAdapter(id: string): SourceAdapter | undefined {

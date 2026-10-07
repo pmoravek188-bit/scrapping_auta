@@ -141,6 +141,9 @@ describe("normalizeModel with a BMW make — numbered-series aliasing", () => {
   it("canonicalizes every spelling of the 3 Series to the same '3-series' slug", () => {
     // Czech ("Řada 3") — confirmed live as sauto.cz's `model_cb.seo_name`.
     expect(normalizeModel("Řada 3", MAKE)).toBe("3-series");
+    // Slovak ("Rad 3", no trailing vowel) — confirmed live as autobazar.eu's
+    // own `carModelValue`.
+    expect(normalizeModel("Rad 3", MAKE)).toBe("3-series");
     expect(normalizeModel("3-series", MAKE)).toBe("3-series");
     // German.
     expect(normalizeModel("3er", MAKE)).toBe("3-series");

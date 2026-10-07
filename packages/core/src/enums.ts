@@ -56,6 +56,13 @@ export const DRIVE_ALIASES: Record<string, DriveType> = {
   rwd: "rwd",
   "zadni pohon": "rwd",
   "pohon zadni napravy": "rwd",
+  // Slovak bare single-word forms (no "pohon" suffix) — confirmed live:
+  // autobazar.eu's own structured `driveValue` field is literally "Predný"/
+  // "Zadný" (Slovak spelling, diacritics stripped by normalizeEnumToken to
+  // "predny"/"zadny"), not the Czech "přední pohon"/"zadní pohon" phrases
+  // already covered above.
+  predny: "fwd",
+  zadny: "rwd",
 };
 
 /** Czech/Slovak diacritics-aware fuel keyword map -> canonical FuelType. */

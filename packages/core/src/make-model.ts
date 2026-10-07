@@ -163,6 +163,9 @@ export function mercedesClassLetter(modelSlug: string | null | undefined): strin
  *   - Czech: "rada-3" (Řada 3) — confirmed live: sauto.cz's `model_cb.seo_name`
  *     and tipcars.com's listing-detail URL slug for every BMW 3-series car
  *     are literally "rada-3", not "3-series".
+ *   - Slovak: "rad-3" (Rad 3, no trailing vowel) — confirmed live:
+ *     autobazar.eu's own `carModelValue` for a BMW 3-series car is literally
+ *     "Rad 3".
  *   - German: "3er"
  *   - reversed order: "series-3"
  *   - English: "3-series" (already canonical; idempotent)
@@ -196,6 +199,13 @@ function applyBmwModelAlias(slug: string): string {
 
   // Czech "Řada N" -> "rada-n".
   if (first === "rada" && rest[0] && /^[1-8]$/.test(rest[0])) {
+    return [`${rest[0]}-series`, ...rest.slice(1)].join("-");
+  }
+  // Slovak "Rad N" -> "rad-n" (confirmed live: autobazar.eu's own
+  // `carModelValue` for a BMW 3-series car is literally "Rad 3", not the
+  // Czech "Řada 3" — distinct enough from "rada" above, with no trailing
+  // vowel, that it needs its own branch rather than falling through).
+  if (first === "rad" && rest[0] && /^[1-8]$/.test(rest[0])) {
     return [`${rest[0]}-series`, ...rest.slice(1)].join("-");
   }
   // Reversed "series-n".
