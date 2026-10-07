@@ -195,7 +195,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Prom
             {sources.map((s) => (
               <input key={s} type="hidden" name="sources" value={s} />
             ))}
-            <select name="sort" defaultValue={sortKey} className="input w-auto">
+            <select name="sort" defaultValue={sortKey} className="input !w-auto">
               {Object.entries(SORT_LABELS).map(([k, v]) => (
                 <option key={k} value={k}>
                   {v}

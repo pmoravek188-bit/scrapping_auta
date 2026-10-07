@@ -109,11 +109,11 @@ export function ScrapeTrigger({ sources }: { sources: { id: string; name: string
   }
 
   return (
-    <div className="flex flex-wrap items-center gap-2">
+    <div className="flex min-w-0 max-w-full flex-wrap items-center gap-2">
       {sources.length > 0 && (
         <select
           aria-label="Zdroj"
-          className="input w-40 shrink-0 text-sm"
+          className="input !w-40 shrink-0 text-sm"
           value={source}
           onChange={(e) => setSource(e.target.value)}
           disabled={isRunning}
