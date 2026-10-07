@@ -8,7 +8,7 @@
  * wires it to the DB + e-mail + push side effects.
  */
 import type { DbClient } from "./db.js";
-import { sendSourceAlertEmail } from "./notify/email.js";
+import { loadEmailSenderConfig, sendSourceAlertEmail } from "./notify/email.js";
 import { sendPushToAdmins, type VapidConfig } from "./push.js";
 
 /** A source's median "found" count across its last N successful runs must be
@@ -122,7 +122,7 @@ export async function checkSourceHealthAndAlert(
     `[health-alert] ${source.id}: looks broken (found=${thisRunFound}, errored=${thisRunErrored}), alerting`
   );
   try {
-    await sendSourceAlertEmail(source.name);
+    await sendSourceAlertEmail(source.name, await loadEmailSenderConfig(db));
   } catch (err) {
     console.warn(`[health-alert] ${source.id}: failed to send alert e-mail:`, (err as Error).message);
   }

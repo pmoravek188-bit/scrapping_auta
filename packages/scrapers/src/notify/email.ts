@@ -1,5 +1,6 @@
 /**
- * Email notifications via the Resend REST API (fetch, no SDK dependency).
+ * Email notifications via SMTP (settings in public.app_secrets, e.g. Gmail
+ * with an app password) or, when SMTP isn't configured, the Resend REST API.
  *
  * Two distinct kinds of mail, with distinct recipients:
  *   - the new-matches/favourites digest (`sendMatchDigestEmail`) — sent
@@ -22,7 +23,9 @@
  * succeeds on a later run.
  */
 
+import nodemailer from "nodemailer";
 import { resolveImageUrl } from "@scrapping-auta/core";
+import type { DbClient } from "../db.js";
 
 const RESEND_ENDPOINT = "https://api.resend.com/emails";
 const MAX_CARS_PER_EMAIL = 20;
@@ -56,9 +59,94 @@ export interface NotifyFavoriteChange extends NotifyListing {
  * recipient (`to`) is always passed separately per call, since it now
  * differs per digest (a user's own address) vs. per alert (the admin
  * address). */
+export interface SmtpConfig {
+  host: string;
+  port: number;
+  user: string;
+  pass: string;
+}
+
 export interface EmailSenderConfig {
-  apiKey: string;
+  /** Resend API key — used when `smtp` is not set. */
+  apiKey?: string;
   from: string;
+  /** SMTP (e.g. Gmail with an app password) — preferred over Resend when
+   * set, since it can deliver to any recipient without a verified domain. */
+  smtp?: SmtpConfig;
+}
+
+/**
+ * Sender config for this run: SMTP from `public.app_secrets` (keys
+ * smtp_host, smtp_port, smtp_user, smtp_pass, optional smtp_from — service
+ * role only, same table as the VAPID keys, so no GitHub secret is needed)
+ * when present, otherwise Resend from env vars.
+ */
+export async function loadEmailSenderConfig(
+  db: DbClient | null,
+  env: NodeJS.ProcessEnv = process.env
+): Promise<EmailSenderConfig | null> {
+  if (db) {
+    const { data, error } = await db
+      .from("app_secrets")
+      .select("key, value")
+      .in("key", ["smtp_host", "smtp_port", "smtp_user", "smtp_pass", "smtp_from"]);
+    if (error) {
+      console.warn("[notify:email] failed to read SMTP settings from app_secrets:", error.message);
+    } else {
+      const byKey = new Map((data ?? []).map((r) => [r.key, r.value]));
+      const host = byKey.get("smtp_host");
+      const user = byKey.get("smtp_user");
+      const pass = byKey.get("smtp_pass");
+      if (host && user && pass) {
+        return {
+          from: byKey.get("smtp_from") || `Scrapping cars <${user}>`,
+          smtp: { host, port: Number(byKey.get("smtp_port") || 465), user, pass },
+        };
+      }
+    }
+  }
+  return getEmailSenderConfigFromEnv(env);
+}
+
+interface OutgoingMail {
+  to: string;
+  subject: string;
+  html: string;
+  text: string;
+}
+
+/** Sends one e-mail via SMTP or Resend; never throws, returns success. */
+async function deliver(config: EmailSenderConfig, mail: OutgoingMail): Promise<boolean> {
+  if (config.smtp) {
+    try {
+      const transport = nodemailer.createTransport({
+        host: config.smtp.host,
+        port: config.smtp.port,
+        secure: config.smtp.port === 465,
+        auth: { user: config.smtp.user, pass: config.smtp.pass },
+      });
+      await transport.sendMail({ from: config.from, ...mail });
+      return true;
+    } catch (err) {
+      console.warn(`[notify:email] SMTP send to ${mail.to} failed:`, (err as Error).message);
+      return false;
+    }
+  }
+  if (!config.apiKey) return false;
+  const res = await fetch(RESEND_ENDPOINT, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${config.apiKey}`,
+      "Content-Type": "application/json",
+    },
+    body: JSON.stringify({ from: config.from, to: [mail.to], subject: mail.subject, html: mail.html, text: mail.text }),
+  });
+  if (!res.ok) {
+    const body = await res.text().catch(() => "");
+    console.warn(`[notify:email] Resend API returned ${res.status} for ${mail.to}: ${body}`);
+    return false;
+  }
+  return true;
 }
 
 /** Reads the shared sender config (API key + from-address) from env vars;
@@ -253,7 +341,7 @@ export async function sendMatchDigestEmail(
   config: EmailSenderConfig | null = getEmailSenderConfigFromEnv()
 ): Promise<boolean> {
   if (!config) {
-    console.log("[notify:email] RESEND_API_KEY not set, skipping digest");
+    console.log("[notify:email] e-mail not configured (SMTP or RESEND_API_KEY), skipping digest");
     return false;
   }
   const nonEmpty = groups.filter((g) => g.listings.length > 0);
@@ -268,26 +356,13 @@ export async function sendMatchDigestEmail(
   ].filter((p): p is string => Boolean(p));
   const subject = `Scrapping cars: ${subjectParts.join(", ")}`;
 
-  const res = await fetch(RESEND_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: config.from,
-      to: [to],
-      subject,
-      html: renderDigestHtml(nonEmpty, favoriteChanges),
-      text: renderDigestText(nonEmpty, favoriteChanges),
-    }),
+  const ok = await deliver(config, {
+    to,
+    subject,
+    html: renderDigestHtml(nonEmpty, favoriteChanges),
+    text: renderDigestText(nonEmpty, favoriteChanges),
   });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    console.warn(`[notify:email] Resend API returned ${res.status} for ${to}: ${body}`);
-    return false;
-  }
+  if (!ok) return false;
   console.log(`[notify:email] sent digest to ${to} for ${nonEmpty.length} searches, ${totalCars} cars`);
   return true;
 }
@@ -326,26 +401,8 @@ export async function sendSourceAlertEmail(
   </body>
 </html>`;
 
-  const res = await fetch(RESEND_ENDPOINT, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.apiKey}`,
-      "Content-Type": "application/json",
-    },
-    body: JSON.stringify({
-      from: config.from,
-      to: [to],
-      subject,
-      html,
-      text,
-    }),
-  });
-
-  if (!res.ok) {
-    const body = await res.text().catch(() => "");
-    console.warn(`[notify:email] Resend API returned ${res.status} for source alert: ${body}`);
-    return false;
-  }
+  const ok = await deliver(config, { to, subject, html, text });
+  if (!ok) return false;
   console.log(`[notify:email] sent source health alert for "${sourceName}"`);
   return true;
 }

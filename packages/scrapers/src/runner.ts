@@ -14,7 +14,7 @@ import { getAdapter } from "./registry.js";
 import { fetchEurCzkRate } from "./exchange-rate.js";
 import {
   sendMatchDigestEmail,
-  getEmailSenderConfigFromEnv,
+  loadEmailSenderConfig,
   type NotifySearchGroup,
   type NotifyFavoriteChange,
 } from "./notify/email.js";
@@ -1016,7 +1016,7 @@ async function notifyNewMatches(db: DbClient, vapid: VapidConfig | null): Promis
     digestFor(event.userId).favoriteChanges.push(event.change);
   }
 
-  const emailConfig = getEmailSenderConfigFromEnv();
+  const emailConfig = await loadEmailSenderConfig(db);
   for (const [userId, digest] of digestsByUser) {
     const email = await resolveUserEmail(db, userId);
     if (!email) {

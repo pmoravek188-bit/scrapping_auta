@@ -2,6 +2,7 @@ import { describe, expect, it, vi, afterEach } from "vitest";
 import {
   getAdminEmailFromEnv,
   getEmailSenderConfigFromEnv,
+  loadEmailSenderConfig,
   renderDigestHtml,
   renderDigestText,
   sendMatchDigestEmail,
@@ -272,5 +273,36 @@ describe("sendSourceAlertEmail", () => {
     expect(sent).toBe(true);
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);
     expect(body.subject).toBe("⚠️ Scrapping cars: zdroj sauto nevrací auta");
+  });
+});
+
+describe("loadEmailSenderConfig", () => {
+  function fakeDb(rows: { key: string; value: string }[]) {
+    const obj = {
+      from: () => obj,
+      select: () => obj,
+      in: () => Promise.resolve({ data: rows, error: null }),
+    };
+    return obj as unknown as Parameters<typeof loadEmailSenderConfig>[0];
+  }
+
+  it("prefers SMTP settings from app_secrets", async () => {
+    const cfg = await loadEmailSenderConfig(
+      fakeDb([
+        { key: "smtp_host", value: "smtp.gmail.com" },
+        { key: "smtp_user", value: "me@gmail.com" },
+        { key: "smtp_pass", value: "app-pass" },
+      ]),
+      { RESEND_API_KEY: "key" } as NodeJS.ProcessEnv
+    );
+    expect(cfg?.smtp).toEqual({ host: "smtp.gmail.com", port: 465, user: "me@gmail.com", pass: "app-pass" });
+    expect(cfg?.from).toBe("Scrapping cars <me@gmail.com>");
+  });
+
+  it("falls back to Resend env config when SMTP is incomplete", async () => {
+    const cfg = await loadEmailSenderConfig(fakeDb([{ key: "smtp_host", value: "smtp.gmail.com" }]), {
+      RESEND_API_KEY: "key",
+    } as NodeJS.ProcessEnv);
+    expect(cfg).toEqual({ apiKey: "key", from: "Scrapping cars <onboarding@resend.dev>" });
   });
 });
