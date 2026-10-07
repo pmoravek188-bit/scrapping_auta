@@ -112,12 +112,13 @@ export function ScrapeTrigger({ sources }: { sources: { id: string; name: string
     <div className="flex flex-wrap items-center gap-2">
       {sources.length > 0 && (
         <select
-          className="input w-auto text-sm"
+          aria-label="Zdroj"
+          className="input w-40 shrink-0 text-sm"
           value={source}
           onChange={(e) => setSource(e.target.value)}
           disabled={isRunning}
         >
-          <option value="">Vše</option>
+          <option value="">Všechny zdroje</option>
           {sources.map((s) => (
             <option key={s.id} value={s.id}>
               {s.name}
@@ -125,7 +126,12 @@ export function ScrapeTrigger({ sources }: { sources: { id: string; name: string
           ))}
         </select>
       )}
-      <button type="button" className="btn" onClick={trigger} disabled={isRunning || triggering}>
+      <button
+        type="button"
+        className="btn-secondary shrink-0 whitespace-nowrap"
+        onClick={trigger}
+        disabled={isRunning || triggering}
+      >
         {isRunning ? (
           <RefreshCw className="h-4 w-4 animate-spin" aria-hidden />
         ) : (
@@ -138,7 +144,7 @@ export function ScrapeTrigger({ sources }: { sources: { id: string; name: string
           href={run.html_url}
           target="_blank"
           rel="noreferrer noopener"
-          className="inline-flex items-center gap-1 text-xs text-gray-500 hover:text-brand-700"
+          className="inline-flex items-center gap-1 whitespace-nowrap text-xs text-gray-500 hover:text-brand-700"
         >
           {run.conclusion === "success" ? "Hotovo" : run.conclusion === "failure" ? "Chyba" : run.status}{" "}
           před {minutesAgo(run.created_at)} min

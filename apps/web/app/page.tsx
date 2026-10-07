@@ -67,12 +67,12 @@ export default async function DashboardPage() {
 
   return (
     <div>
-      <div className="mb-5 flex flex-wrap items-center justify-between gap-3">
-        <div>
+      <div className="mb-5 flex flex-col gap-3 lg:flex-row lg:items-center lg:justify-between">
+        <div className="min-w-0">
           <h1 className="text-2xl font-bold text-gray-900">Nejnovější nabídky</h1>
           <p className="text-sm text-gray-500">Poslední shody napříč všemi vašimi hledáními.</p>
         </div>
-        <div className="flex flex-wrap items-center gap-2">
+        <div className="flex flex-wrap items-center gap-2 lg:justify-end">
           {admin && <ScrapeTrigger sources={sourceRows ?? []} />}
           <Link href="/results" className="btn-secondary">
             <Search className="h-4 w-4" aria-hidden />
