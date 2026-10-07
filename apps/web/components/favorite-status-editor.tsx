@@ -83,7 +83,7 @@ export function FavoriteStatusEditor({
             placeholder="Poznámka…"
           />
           <div className="flex gap-2">
-            <button type="button" onClick={saveNote} disabled={savingNote} className="btn-secondary py-1 text-xs">
+            <button type="button" onClick={saveNote} disabled={savingNote} className="btn-secondary h-8 py-1 text-xs">
               Uložit
             </button>
             <button
