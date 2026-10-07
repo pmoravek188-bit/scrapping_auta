@@ -2,7 +2,6 @@ import clsx from "clsx";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { NotConfigured } from "@/components/not-configured";
 import { ScrapeTrigger } from "@/components/scrape-trigger";
-import { currentUserIsAdmin } from "@/lib/admin";
 import { NotificationsToggle } from "@/components/notifications-toggle";
 import { formatDateTime } from "@/lib/format";
 
@@ -11,7 +10,6 @@ export const dynamic = "force-dynamic";
 export default async function SourcesPage() {
   const supabase = await createSupabaseServerClient();
   if (!supabase) return <NotConfigured />;
-  const admin = await currentUserIsAdmin(supabase);
 
   const [{ data: sources }, { data: runs }] = await Promise.all([
     supabase.from("sources").select("*").order("id"),
@@ -31,7 +29,7 @@ export default async function SourcesPage() {
           <h1 className="text-2xl font-bold text-gray-900">Stav zdrojů</h1>
           <p className="text-sm text-gray-500">Kdy který bazar naposledy fungoval a co vrátil.</p>
         </div>
-        {admin && <ScrapeTrigger sources={enabledSources} />}
+        <ScrapeTrigger sources={enabledSources} />
       </div>
 
       <div className="card space-y-2">

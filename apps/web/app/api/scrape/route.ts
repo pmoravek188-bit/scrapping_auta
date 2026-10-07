@@ -1,7 +1,6 @@
 import { NextResponse, type NextRequest } from "next/server";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { githubConfig, getLatestScrapeRun, dispatchScrape } from "@/lib/scrape-trigger.server";
-import { isAdmin } from "@/lib/admin";
 
 export const dynamic = "force-dynamic";
 
@@ -10,23 +9,19 @@ export const dynamic = "force-dynamic";
  * apps/web/middleware.ts), so this route is NOT protected by the middleware
  * redirect — the auth check below is the only thing guarding it.
  */
-async function requireAdmin() {
+async function requireUser() {
   const supabase = await createSupabaseServerClient();
   if (!supabase) return { error: NextResponse.json({ error: "not_configured" }, { status: 500 }) };
   const {
     data: { user },
   } = await supabase.auth.getUser();
   if (!user) return { error: NextResponse.json({ error: "unauthorized" }, { status: 401 }) };
-  // Triggering/inspecting scrape runs is admin-only (see public.app_admins).
-  if (!(await isAdmin(supabase, user.id))) {
-    return { error: NextResponse.json({ error: "forbidden" }, { status: 403 }) };
-  }
   return { user };
 }
 
 /** GET: status of the latest scrape workflow run. */
 export async function GET() {
-  const auth = await requireAdmin();
+  const auth = await requireUser();
   if (auth.error) return auth.error;
 
   const config = githubConfig();
@@ -55,7 +50,7 @@ export async function GET() {
 
 /** POST: trigger a scrape run via workflow_dispatch, optionally for one source. */
 export async function POST(request: NextRequest) {
-  const auth = await requireAdmin();
+  const auth = await requireUser();
   if (auth.error) return auth.error;
 
   const config = githubConfig();

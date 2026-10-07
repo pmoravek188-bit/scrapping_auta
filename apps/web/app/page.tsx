@@ -5,7 +5,6 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { NotConfigured } from "@/components/not-configured";
 import { CarCard } from "@/components/car-card";
 import { ScrapeTrigger } from "@/components/scrape-trigger";
-import { currentUserIsAdmin } from "@/lib/admin";
 import { fetchPriceEvaluations } from "@/lib/price-evaluation.server";
 
 export const dynamic = "force-dynamic";
@@ -13,7 +12,6 @@ export const dynamic = "force-dynamic";
 export default async function DashboardPage() {
   const supabase = await createSupabaseServerClient();
   if (!supabase) return <NotConfigured />;
-  const admin = await currentUserIsAdmin(supabase);
 
   const [{ data: matches }, { data: sourceRows }, { data: favoriteRows }] = await Promise.all([
     supabase
@@ -73,7 +71,7 @@ export default async function DashboardPage() {
           <p className="text-sm text-gray-500">Poslední shody napříč všemi vašimi hledáními.</p>
         </div>
         <div className="flex flex-wrap items-center gap-2 lg:justify-end">
-          {admin && <ScrapeTrigger sources={sourceRows ?? []} />}
+          <ScrapeTrigger sources={sourceRows ?? []} />
           <Link href="/results" className="btn-secondary">
             <Search className="h-4 w-4" aria-hidden />
             Všechny výsledky
