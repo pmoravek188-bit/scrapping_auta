@@ -344,6 +344,7 @@ export const carvagoAdapter: SourceAdapter = {
   async search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]> {
     const maxPages = ctx.maxPages ?? MAX_RESULT_PAGES;
     const out: RawListing[] = [];
+    let hitCap = false;
     const requestedMakeSlug = query.make ? slugifyMakeModel(query.make) : null;
     for (let page = 0; page < maxPages; page++) {
       const url = buildCarvagoUrl(query, page);
@@ -375,7 +376,9 @@ export const carvagoAdapter: SourceAdapter = {
       const items = parseCarvagoHtml(html);
       out.push(...items);
       if (items.length < PAGE_SIZE) break;
+      if (page === maxPages - 1) hitCap = true;
     }
+    if (hitCap) ctx.onPageCapHit?.();
     console.log(`[carvago] fetched ${out.length} listings`);
     return out;
   },

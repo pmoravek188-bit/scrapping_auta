@@ -207,6 +207,7 @@ export const bazosAdapter: SourceAdapter = {
   async search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]> {
     const maxPages = ctx.maxPages ?? MAX_RESULT_PAGES;
     const out: RawListing[] = [];
+    let hitCap = false;
     for (let page = 0; page < maxPages; page++) {
       const url = buildBazosUrl(query, page * PAGE_SIZE);
       let html: string;
@@ -223,7 +224,9 @@ export const bazosAdapter: SourceAdapter = {
       // `items.length` to decide whether to keep paginating.
       const rawCount = (html.match(/class="inzeraty inzeratyflex"/g) ?? []).length;
       if (rawCount < PAGE_SIZE) break;
+      if (page === maxPages - 1) hitCap = true;
     }
+    if (hitCap) ctx.onPageCapHit?.();
     console.log(`[bazos] fetched ${out.length} listings`);
     return out;
   },

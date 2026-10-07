@@ -5,6 +5,17 @@ export interface SourceContext {
   eurCzkRate: number;
   /** Max number of result pages to walk per search (default from http.ts MAX_RESULT_PAGES). */
   maxPages?: number;
+  /**
+   * Called by an adapter's `search()` when its result-page loop hit
+   * `maxPages` while the last page fetched still looked full/non-terminal
+   * (i.e. it stopped ONLY because of the cap, not because results actually
+   * ran out) — more matching listings may exist beyond it. Lets the caller
+   * (see packages/scrapers/src/runner.ts) surface a warning on
+   * `scrape_runs.errors`, the same way the gone-check circuit breaker does,
+   * instead of silently truncating. Optional: omitted by callers that don't
+   * need it (dry-run CLI, scripts/audit.ts, most unit tests).
+   */
+  onPageCapHit?: () => void;
 }
 
 export interface SourceAdapter {

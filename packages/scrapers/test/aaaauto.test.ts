@@ -1,11 +1,33 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
-import { buildAaaAutoUrl, parseAaaAutoDetailText, parseAaaAutoHtml } from "../src/sources/aaaauto.js";
+import {
+  buildAaaAutoUrl,
+  looksLikeAaaAutoListingPage,
+  parseAaaAutoDetailText,
+  parseAaaAutoHtml,
+} from "../src/sources/aaaauto.js";
 import type { SearchQuery } from "@scrapping-auta/core";
 
 const fixturePath = fileURLToPath(new URL("./fixtures/aaaauto-search.html", import.meta.url));
 const fixture = readFileSync(fixturePath, "utf-8");
+
+// Captured live 2026-10-07 from `https://www.aaaauto.cz/ojete-vozy/volkswagen/
+// multivan?page=1` (13 matching cars that day), trimmed to 2 of the 13
+// `itemListElement` entries — full `@graph` (AutoDealer/WebSite/WebPage/
+// CollectionPage/ItemList/BreadcrumbList) otherwise kept intact.
+const liveFixturePath = fileURLToPath(new URL("./fixtures/aaaauto-search-live.html", import.meta.url));
+const liveFixture = readFileSync(liveFixturePath, "utf-8");
+
+// Captured live 2026-10-07 from the same URL with `&priceFrom=99999999`
+// added, to get a GENUINE zero-result page (confirmed via the page's own
+// "0 aut" text and `totalItems:0`) rather than a guess at what one looks
+// like — note it still has AutoDealer/WebSite/WebPage in its `@graph`, it
+// just has no ItemList/CollectionPage/BreadcrumbList entry at all.
+const zeroResultsFixturePath = fileURLToPath(
+  new URL("./fixtures/aaaauto-zero-results-live.html", import.meta.url)
+);
+const zeroResultsFixture = readFileSync(zeroResultsFixturePath, "utf-8");
 
 const baseQuery: SearchQuery = {
   fuel: [],
@@ -128,6 +150,50 @@ describe("aaaauto adapter", () => {
 
   it("returns an empty array when there's no ld+json ItemList", () => {
     expect(parseAaaAutoHtml("<html><body>no data</body></html>")).toEqual([]);
+  });
+
+  it("parses listings from today's real live markup (regression: root-cause investigation for 'found: 0' on every GitHub Actions run)", () => {
+    // Reproduces the exact page shape the production runner sees (see
+    // looksLikeAaaAutoListingPage's doc comment for the investigation this
+    // fixture backs) — confirms the parser still extracts real listings from
+    // today's actual aaaauto.cz markup, not just the old hand-trimmed
+    // fixture above.
+    const items = parseAaaAutoHtml(liveFixture);
+    expect(items).toHaveLength(2);
+    expect(items[0]).toMatchObject({
+      sourceId: "19822275",
+      make: "Volkswagen",
+      model: "Multivan",
+      year: 2017,
+      mileageKm: 87395,
+      fuel: "Diesel",
+      transmission: "Automatic",
+      sellerType: "dealer",
+    });
+    expect(items[0].url).toBe("https://www.aaaauto.cz/detail/volkswagen/multivan/19822275");
+  });
+});
+
+describe("looksLikeAaaAutoListingPage", () => {
+  it("recognizes a real page with matching listings", () => {
+    expect(looksLikeAaaAutoListingPage(liveFixture)).toBe(true);
+  });
+
+  it("recognizes a real page with GENUINELY zero results (still has WebPage/AutoDealer, just no ItemList)", () => {
+    expect(parseAaaAutoHtml(zeroResultsFixture)).toEqual([]);
+    expect(looksLikeAaaAutoListingPage(zeroResultsFixture)).toBe(true);
+  });
+
+  it("does NOT recognize a page with no ld+json at all (e.g. a bot-mitigation/geo-block/consent page silently swapped in instead of the real one)", () => {
+    const blockedPage = `<!DOCTYPE html><html><head><title>Just a moment...</title></head><body>
+      <div id="challenge">Please verify you are a human to continue.</div>
+    </body></html>`;
+    expect(looksLikeAaaAutoListingPage(blockedPage)).toBe(false);
+  });
+
+  it("does NOT recognize a page with unrelated ld+json (no WebPage/AutoDealer entry)", () => {
+    const otherPage = `<html><head><script type="application/ld+json">{"@context":"https://schema.org","@graph":[{"@type":"BreadcrumbList","itemListElement":[]}]}</script></head><body></body></html>`;
+    expect(looksLikeAaaAutoListingPage(otherPage)).toBe(false);
   });
 });
 

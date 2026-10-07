@@ -92,16 +92,21 @@ const BASE_URL = "https://www.autoscout24.cz";
 const PAGE_SIZE = 20;
 /**
  * Default page cap for THIS adapter when the caller doesn't explicitly pass
- * `ctx.maxPages` (an explicit value, e.g. from scripts/audit.ts's
- * `--maxPages`, is always honored as-is — this only raises the adapter's own
- * fallback). Confirmed live 2026-09-30: a narrowed make/model+filter query
- * (e.g. VW Multivan diesel/automatic) routinely has 100-800+ results on the
- * `cy=D` (Germany-only) inventory, so the previous fallback of
- * `MAX_RESULT_PAGES` (5 pages * 20 = 100) was silently capping well short of
- * what a narrow saved search could actually match. 15 pages * 20 = 300 is a
- * sane upper bound — see packages/scrapers/src/runner.ts, which passes this
- * adapter a higher `maxPages` than the shared default for the same reason. */
-export const AUTOSCOUT24_DEFAULT_MAX_PAGES = 15;
+ * `ctx.maxPages` (an explicit value is always honored as-is — this only
+ * raises the adapter's own fallback, e.g. for a direct `adapter.search()`
+ * call or a test). Confirmed live (2026-09-30, re-confirmed 2026-10-07 via
+ * the pagination-coverage audit): a narrowed make/model+filter query (e.g.
+ * VW Multivan 2022+/automatic/"prodloužená" — saved search #2's own filters)
+ * still hits the SHARED default cap (`MAX_RESULT_PAGES`, 30 pages = 600)
+ * exactly, i.e. truncated — this adapter routinely has 100-800+ results on
+ * the `cy=D` (Germany-only) inventory even for a fairly narrow query. 50
+ * pages * 20 = 1000 comfortably covers the confirmed worst case — see
+ * packages/scrapers/src/runner.ts's `PER_SOURCE_MAX_PAGES`, which passes
+ * this adapter the same higher `maxPages` for the same reason (the real
+ * nightly run always passes `maxPages` explicitly, so THIS fallback mainly
+ * matters for other callers that don't, e.g. a direct `adapter.search()`
+ * call). */
+export const AUTOSCOUT24_DEFAULT_MAX_PAGES = 50;
 
 /** SearchQuery FuelType -> autoscout24.cz's own `fuel` query value. Confirmed
  * live via `numberOfResults` narrowing on `/lst/volkswagen/multivan?cy=D`:
@@ -396,6 +401,7 @@ export const autoscout24Adapter: SourceAdapter = {
   async search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]> {
     const maxPages = ctx.maxPages ?? AUTOSCOUT24_DEFAULT_MAX_PAGES;
     const out: RawListing[] = [];
+    let hitCap = false;
     for (let page = 0; page < maxPages; page++) {
       const url = buildAutoScout24Url(query, page, ctx.eurCzkRate);
       let html: string;
@@ -408,7 +414,9 @@ export const autoscout24Adapter: SourceAdapter = {
       const items = parseAutoScout24Html(html);
       out.push(...items);
       if (items.length < PAGE_SIZE) break;
+      if (page === maxPages - 1) hitCap = true;
     }
+    if (hitCap) ctx.onPageCapHit?.();
     console.log(`[autoscout24] fetched ${out.length} listings`);
     return out;
   },

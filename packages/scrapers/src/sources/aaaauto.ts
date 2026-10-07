@@ -123,6 +123,42 @@ function idFromUrl(url: string): string | null {
   return m?.[1] ?? null;
 }
 
+/**
+ * True if `html` looks like a real aaaauto.cz page (confirmed live: every
+ * real page — whether it has matching cars or genuinely zero, see the
+ * `priceFrom=99999999` live check — embeds a `WebPage`/`AutoDealer` entry in
+ * its ld+json `@graph`; a genuinely empty result just omits the `ItemList`
+ * entry instead, it still has these). False means the response is something
+ * else entirely (most likely a bot-mitigation/geo-block/consent page served
+ * instead of the real one — confirmed live: aaaauto has returned `found: 0`
+ * on EVERY GitHub Actions run since this source was added, each with a plain
+ * HTTP 200 and no redirect, while the exact same request from a residential
+ * IP always returns the real page) — `search()` below treats that as a real
+ * error instead of silently reporting zero results. */
+export function looksLikeAaaAutoListingPage(html: string): boolean {
+  const scripts = html.matchAll(
+    /<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g
+  );
+  for (const scriptMatch of scripts) {
+    const rawJson = scriptMatch[1];
+    if (!rawJson) continue;
+    let doc: unknown;
+    try {
+      doc = JSON.parse(rawJson);
+    } catch {
+      continue;
+    }
+    const graph = (doc as { "@graph"?: unknown[] })?.["@graph"] ?? [];
+    const hasPageMarker = graph.some((g) => {
+      if (typeof g !== "object" || g === null) return false;
+      const type = (g as { "@type"?: string })["@type"];
+      return type === "WebPage" || type === "AutoDealer";
+    });
+    if (hasPageMarker) return true;
+  }
+  return false;
+}
+
 export function parseAaaAutoHtml(html: string): RawListing[] {
   const scripts = html.matchAll(
     /<script[^>]*type="application\/ld\+json"[^>]*>([\s\S]*?)<\/script>/g
@@ -209,6 +245,7 @@ export const aaaautoAdapter: SourceAdapter = {
   async search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]> {
     const maxPages = ctx.maxPages ?? MAX_RESULT_PAGES;
     const out: RawListing[] = [];
+    let hitCap = false;
     for (let page = 0; page < maxPages; page++) {
       const url = buildAaaAutoUrl(query, page);
       let html: string;
@@ -230,13 +267,32 @@ export const aaaautoAdapter: SourceAdapter = {
         }
         html = fetched.html;
       } catch (err) {
-        console.warn(`[aaaauto] request failed on page ${page}:`, (err as Error).message);
+        const message = (err as Error).message;
+        console.warn(`[aaaauto] request failed on page ${page}:`, message);
+        // A first-page failure means this query got NO data at all, not
+        // "pagination happened to stop here" — surface it as a real error
+        // (see the per-query catch in runner.ts) instead of silently
+        // returning zero results with nothing to show for it.
+        if (page === 0) throw new Error(`[aaaauto] request failed on page 0: ${message}`);
         break;
       }
       const items = parseAaaAutoHtml(html);
+      if (items.length === 0 && page === 0 && !looksLikeAaaAutoListingPage(html)) {
+        // Got a 200 on the exact URL we asked for (not the redirect-to-root
+        // case above), but it doesn't look like a real aaaauto.cz page at
+        // all — not even the markers a genuinely empty result still has
+        // (see looksLikeAaaAutoListingPage). Most likely a bot-mitigation/
+        // geo-block page silently swapped in instead of the real one; treat
+        // it as an error rather than reporting a (wrong) zero.
+        throw new Error(
+          `[aaaauto] response doesn't look like a real aaaauto.cz page (possible bot/geo-block) at ${url}`
+        );
+      }
       out.push(...items);
       if (items.length < PAGE_SIZE) break;
+      if (page === maxPages - 1) hitCap = true;
     }
+    if (hitCap) ctx.onPageCapHit?.();
     console.log(`[aaaauto] fetched ${out.length} listings`);
     return out;
   },

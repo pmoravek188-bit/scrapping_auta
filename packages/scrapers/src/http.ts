@@ -146,7 +146,20 @@ export async function fetchTextWithUrl(url: string, opts: FetchOptions = {}): Pr
   return { html: await res.text(), finalUrl: res.url };
 }
 
-export const MAX_RESULT_PAGES = 5;
+/**
+ * Shared default/safety cap on how many result pages one `adapter.search()`
+ * call walks: page until a source's own results run out (every adapter's
+ * loop already stops itself once a page comes back short/empty/repeated —
+ * see each adapter's own termination check), or until this many pages,
+ * whichever comes first. Was 5 (100-ish results on a 20/page source) —
+ * raised to 30 (600-ish) after the pagination-coverage audit found several
+ * saved searches/sources with well more than 100 matching listings, silently
+ * truncated by the old cap (see packages/scrapers/src/runner.ts's
+ * PER_SOURCE_MAX_PAGES for the few sources that still need a different
+ * number, and `onPageCapHit` on SourceContext for how hitting this cap gets
+ * surfaced instead of silently truncating).
+ */
+export const MAX_RESULT_PAGES = 30;
 
 export interface GoneCheckResponse {
   status: number | null;

@@ -2,13 +2,32 @@ import { describe, expect, it } from "vitest";
 import {
   HEALTH_ALERT_COOLDOWN_HOURS,
   HEALTH_ALERT_MIN_MEDIAN_FOUND,
+  HEALTH_ALERT_STUCK_BASELINE_LOOKBACK_DAYS,
+  HEALTH_ALERT_STUCK_RUNS_THRESHOLD,
   median,
   shouldAlertSource,
   type SourceRunHistoryEntry,
 } from "../src/health-alert.js";
 
+const NOW = new Date("2026-10-07T12:00:00Z");
+
+/** `startedAt` only matters for the stuck-runs rule's 14-day baseline
+ * lookback — defaults to well within that window so tests of the OTHER
+ * rule (median-based) aren't affected by it. */
 function successfulRuns(...found: number[]): SourceRunHistoryEntry[] {
-  return found.map((f) => ({ found: f, errored: false }));
+  return found.map((f) => ({ found: f, errored: false, startedAt: NOW.toISOString() }));
+}
+
+function erroredRuns(count: number, startedAt = NOW.toISOString()): SourceRunHistoryEntry[] {
+  return Array.from({ length: count }, () => ({ found: 0, errored: true, startedAt }));
+}
+
+function zeroRuns(count: number, startedAt = NOW.toISOString()): SourceRunHistoryEntry[] {
+  return Array.from({ length: count }, () => ({ found: 0, errored: false, startedAt }));
+}
+
+function daysAgo(days: number): string {
+  return new Date(NOW.getTime() - days * 24 * 60 * 60 * 1000).toISOString();
 }
 
 describe("median", () => {
@@ -142,5 +161,65 @@ describe("shouldAlertSource", () => {
         now,
       })
     ).toBe(true);
+  });
+});
+
+describe("shouldAlertSource — stuck-broken blind spot (rule B)", () => {
+  it(`alerts on ${HEALTH_ALERT_STUCK_RUNS_THRESHOLD} consecutive found=0 runs backed by a healthy run within the ${HEALTH_ALERT_STUCK_BASELINE_LOOKBACK_DAYS}-day baseline window`, () => {
+    // No recent SUCCESSFUL run left to feed rule A's median at all — the
+    // source has been stuck at 0 so long that even its "recent" history is
+    // all bad. Rule A can't fire; this is exactly the blind spot rule B
+    // exists for.
+    const recentRuns: SourceRunHistoryEntry[] = [
+      ...zeroRuns(HEALTH_ALERT_STUCK_RUNS_THRESHOLD - 1, daysAgo(1)),
+      { found: 8, errored: false, startedAt: daysAgo(10) }, // healthy, 10 days ago
+    ];
+    expect(
+      shouldAlertSource({ thisRunFound: 0, thisRunErrored: false, recentRuns, lastAlertAt: null, now: NOW })
+    ).toBe(true);
+  });
+
+  it("does not alert on a found=0 streak with NO healthy run in the last 14 days (genuinely-quiet source, not broken)", () => {
+    const recentRuns: SourceRunHistoryEntry[] = zeroRuns(10, daysAgo(1));
+    expect(
+      shouldAlertSource({ thisRunFound: 0, thisRunErrored: false, recentRuns, lastAlertAt: null, now: NOW })
+    ).toBe(false);
+  });
+
+  it("does not credit a healthy run from OUTSIDE the 14-day baseline window", () => {
+    const recentRuns: SourceRunHistoryEntry[] = [
+      ...zeroRuns(HEALTH_ALERT_STUCK_RUNS_THRESHOLD - 1, daysAgo(1)),
+      { found: 8, errored: false, startedAt: daysAgo(HEALTH_ALERT_STUCK_BASELINE_LOOKBACK_DAYS + 1) },
+    ];
+    expect(
+      shouldAlertSource({ thisRunFound: 0, thisRunErrored: false, recentRuns, lastAlertAt: null, now: NOW })
+    ).toBe(false);
+  });
+
+  it(`alerts on ${HEALTH_ALERT_STUCK_RUNS_THRESHOLD} consecutive ERRORED runs even with NO healthy run ever (broken since it was added — the aaaauto case)`, () => {
+    const recentRuns: SourceRunHistoryEntry[] = erroredRuns(10, daysAgo(1));
+    expect(
+      shouldAlertSource({ thisRunFound: 0, thisRunErrored: true, recentRuns, lastAlertAt: null, now: NOW })
+    ).toBe(true);
+  });
+
+  it("does not alert on fewer than the threshold of consecutive bad runs", () => {
+    // Only 1 prior bad run + this one = 2, one short of the threshold (3),
+    // and no healthy baseline to fall back on either.
+    const recentRuns: SourceRunHistoryEntry[] = [
+      { found: 0, errored: false, startedAt: daysAgo(1) },
+      { found: 6, errored: false, startedAt: daysAgo(2) },
+    ];
+    expect(
+      shouldAlertSource({ thisRunFound: 0, thisRunErrored: false, recentRuns, lastAlertAt: null, now: NOW })
+    ).toBe(false);
+  });
+
+  it("still respects the cooldown for a stuck-broken source", () => {
+    const recentRuns: SourceRunHistoryEntry[] = erroredRuns(10, daysAgo(1));
+    const lastAlertAt = new Date(NOW.getTime() - 6 * 60 * 60 * 1000).toISOString(); // 6h ago
+    expect(
+      shouldAlertSource({ thisRunFound: 0, thisRunErrored: true, recentRuns, lastAlertAt, now: NOW })
+    ).toBe(false);
   });
 });

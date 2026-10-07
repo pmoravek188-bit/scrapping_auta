@@ -263,6 +263,7 @@ export const skodaplusAdapter: SourceAdapter = {
     }
 
     let after: string | null = null;
+    let hitCap = false;
     for (let page = 0; page < maxPages; page++) {
       let res: GraphQlResponse<CarsQueryData>;
       try {
@@ -285,9 +286,14 @@ export const skodaplusAdapter: SourceAdapter = {
       const items = parseSkodaPlusEdges(res.data ?? {});
       out.push(...items);
       const pageInfo = res.data?.cars?.pageInfo;
+      // Unlike most adapters (which infer "more pages?" from a short page),
+      // the API tells us directly via `hasNextPage` — so a cap-hit here is
+      // unambiguous: the API itself says there's more, we just stopped.
       if (!pageInfo?.hasNextPage || !pageInfo.endCursor) break;
+      if (page === maxPages - 1) hitCap = true;
       after = pageInfo.endCursor;
     }
+    if (hitCap) ctx.onPageCapHit?.();
 
     console.log(`[skodaplus] fetched ${out.length} listings`);
     return out;

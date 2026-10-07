@@ -341,6 +341,7 @@ export const tipcarsAdapter: SourceAdapter = {
     // to the make-only URL once and let the client-side matcher narrow by
     // model from there, same as every source that has no model slug at all.
     let makeOnly = false;
+    let hitCap = false;
     for (let page = 0; page < maxPages; page++) {
       const url = buildTipCarsUrl(query, page, { makeOnly });
       let html: string;
@@ -369,7 +370,9 @@ export const tipcarsAdapter: SourceAdapter = {
       // A page that repeats only ids we've already seen means we've looped
       // back / reached the end, regardless of how many items it rendered.
       if (newCount === 0) break;
+      if (page === maxPages - 1) hitCap = true;
     }
+    if (hitCap) ctx.onPageCapHit?.();
     console.log(`[tipcars] fetched ${out.length} listings`);
     return out;
   },

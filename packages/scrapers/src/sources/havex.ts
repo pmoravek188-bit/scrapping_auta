@@ -129,6 +129,7 @@ export const havexAdapter: SourceAdapter = {
   async search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]> {
     const maxPages = ctx.maxPages ?? MAX_RESULT_PAGES;
     const out: RawListing[] = [];
+    let hitCap = false;
     for (let page = 0; page < maxPages; page++) {
       const url = buildHavexUrl(query, page);
       let html: string;
@@ -141,7 +142,9 @@ export const havexAdapter: SourceAdapter = {
       const items = parseHavexHtml(html);
       out.push(...items);
       if (items.length === 0) break;
+      if (page === maxPages - 1) hitCap = true;
     }
+    if (hitCap) ctx.onPageCapHit?.();
     console.log(`[havex] fetched ${out.length} listings`);
     return out;
   },

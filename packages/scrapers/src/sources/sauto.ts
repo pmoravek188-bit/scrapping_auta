@@ -269,6 +269,7 @@ export const sautoAdapter: SourceAdapter = {
   async search(query: SearchQuery, ctx: SourceContext): Promise<RawListing[]> {
     const maxPages = ctx.maxPages ?? MAX_RESULT_PAGES;
     const out: RawListing[] = [];
+    let hitCap = false;
     for (let page = 0; page < maxPages; page++) {
       const url = buildSautoUrl(query, page * PAGE_SIZE);
       let json: unknown;
@@ -281,7 +282,9 @@ export const sautoAdapter: SourceAdapter = {
       const items = parseSautoResponse(json);
       out.push(...items);
       if (items.length < PAGE_SIZE) break;
+      if (page === maxPages - 1) hitCap = true;
     }
+    if (hitCap) ctx.onPageCapHit?.();
     console.log(`[sauto] fetched ${out.length} listings`);
     return out;
   },

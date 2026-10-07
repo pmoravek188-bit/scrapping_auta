@@ -63,34 +63,42 @@ export const MAX_DETAIL_FETCHES_PER_SOURCE_PER_RUN = 40;
  * re-fetched rather than reused — a listing's equipment/description text can
  * change (price drops, re-listings, edited ads). */
 export const DETAIL_CACHE_MAX_AGE_DAYS = 14;
-/** Per-source override for how many result pages a run walks, above the
- * shared `MAX_RESULT_PAGES` default — currently just autoscout24 (confirmed
- * live to often have 100-800+ results for a narrowed make/model+filter query
- * on its `cy=D` Germany-only inventory, well past the shared default's
- * 5-page/100-result cap; see AUTOSCOUT24_DEFAULT_MAX_PAGES in that adapter,
- * which independently applies the same higher fallback for any OTHER caller
- * that doesn't pass `maxPages` explicitly, e.g. a direct `adapter.search()`
- * call — this map is what makes the real nightly run itself use it too,
- * since the loop below always passes `maxPages` explicitly). */
+/**
+ * Per-source override for how many result pages a run walks, above the
+ * shared `MAX_RESULT_PAGES` safety cap (30) — see the 2026-10 pagination-
+ * coverage audit (packages/scrapers/scripts/pagination-measure.ts, not
+ * committed — its output is summarized here and in the task's report). Kept
+ * to the two sources with live-confirmed evidence the shared default still
+ * truncates a REAL saved search (not just an unfiltered probe):
+ *   - autoscout24: VW Multivan 2022+/automatic/"prodloužená" (saved search
+ *     #2's own filters, via `pnpm audit:sources -- --query=vw-multivan`)
+ *     still hit exactly 600 (30 pages * 20/page) — confirmed truncated, not
+ *     a coincidence (its own PAGE_SIZE multiple). Matches this adapter's
+ *     long-standing doc comment (100-800+ results confirmed live for a
+ *     narrowed query on its Germany-only `cy=D` inventory).
+ *   - carvago: BMW 3-series (saved search #1's own full filters — price,
+ *     diesel, automatic, awd, powerMinKw 130 — via `pnpm audit:sources --
+ *     --query=bmw-3-series-full`) ALSO hit exactly 600, despite carvago
+ *     filtering most of those fields server-side (confirmed in its own doc
+ *     comment) — whatever the reason, confirmed truncated on a real, fully-
+ *     filtered saved search, not just a bare probe. 60 pages (1200) gives
+ *     it extra headroom over autoscout24's 50 given this was its REAL
+ *     filtered query, not just an unfiltered one.
+ * Every OTHER source's real (fully-filtered) saved-search numbers measured
+ * comfortably under the shared 30-page cap (e.g. autoscout24's OWN
+ * bmw-3-series-full query — 312 fetched, not capped — and sauto's — 37
+ * fetched; see the report) — including tipcars, which no longer gets a
+ * special case (it did when the shared default was only 5; its real
+ * catalogs for these searches, ~220-450, fit well inside the new default).
+ */
 const PER_SOURCE_MAX_PAGES: Partial<Record<string, number>> = {
-  autoscout24: 15,
+  autoscout24: 50,
+  carvago: 60,
 };
-/** tipcars.com has NO server-side year filter at all (confirmed live, see
- * sources/tipcars.ts's header comment) — a make/model page is walked in
- * listing order regardless of year, so a saved search with a yearFrom/yearTo
- * narrow enough to be past the shared default page cap (MAX_RESULT_PAGES)
- * would otherwise never reach its matching years. Only applied when the
- * query actually has a year filter (see resolveMaxPages below) — an
- * unfiltered-by-year query gets no benefit from walking further and would
- * just spend extra politeFetch budget for nothing. */
-const TIPCARS_YEAR_FILTERED_MAX_PAGES = 10;
 
 /** Resolves how many result pages a run walks for one source+query pair.
  * Exported for unit testing. */
-export function resolveMaxPages(sourceId: string, query: SearchQuery): number {
-  if (sourceId === "tipcars" && (query.yearFrom != null || query.yearTo != null)) {
-    return TIPCARS_YEAR_FILTERED_MAX_PAGES;
-  }
+export function resolveMaxPages(sourceId: string, _query: SearchQuery): number {
   return PER_SOURCE_MAX_PAGES[sourceId] ?? MAX_RESULT_PAGES;
 }
 /** Per source, per run — caps how many listings get a real "does the image
@@ -455,6 +463,8 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
     let newCount = 0;
     let errorText: string | null = null;
     let goneWarning: string | null = null;
+    let searchWarning: string | null = null;
+    let pageCapWarning: string | null = null;
 
     try {
       const overrideQuery = opts.queryOverride ? toOverrideQuery(opts.queryOverride) : null;
@@ -477,20 +487,58 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
               features: [],
             },
           ];
+      // Index-aligned with `queries` — just for labeling `pageCapHits`
+      // messages below with something a human recognizes (a saved search's
+      // name), not used for matching/fetching itself.
+      const queryLabels: string[] = db ? relevantSearches.map((s) => s.name) : [overrideQuery ? "--query" : "(all)"];
 
       const rawById = new Map<string, Awaited<ReturnType<typeof adapter.search>>[number]>();
-      for (const query of queries) {
+      // A query that throws is logged and skipped so one broken saved
+      // search can't block every OTHER search using this source — but the
+      // failure itself must still surface somewhere. Silently swallowing it
+      // here is exactly how a source can go to `found: 0` with an empty
+      // `scrape_runs.errors` and nobody notices (see aaaauto.ts's history) —
+      // so every failure is also collected into `searchWarning` below,
+      // which rides along on the same `errors` column as `goneWarning`.
+      const queryFailures: string[] = [];
+      // Pagination safety-cap hits (see SourceContext.onPageCapHit): a
+      // source/query that hit its page cap while more results likely remain
+      // — collected the same way as queryFailures, surfaced below.
+      const pageCapHits: { label: string; cap: number }[] = [];
+      for (let i = 0; i < queries.length; i++) {
+        const query = queries[i]!;
+        const maxPages = resolveMaxPages(sourceId, query);
         try {
           const results = await adapter.search(query, {
             eurCzkRate,
-            maxPages: resolveMaxPages(sourceId, query),
+            maxPages,
+            onPageCapHit: () => pageCapHits.push({ label: queryLabels[i] ?? "?", cap: maxPages }),
           });
           for (const r of results) rawById.set(r.sourceId, r);
         } catch (err) {
-          console.warn(`[runner] ${sourceId} search failed for one query:`, (err as Error).message);
+          const message = (err as Error).message;
+          console.warn(`[runner] ${sourceId} search failed for one query:`, message);
+          queryFailures.push(message);
         }
       }
       found = rawById.size;
+      if (queryFailures.length > 0) {
+        const extra = queryFailures.length > 1 ? ` (+${queryFailures.length - 1} more)` : "";
+        searchWarning =
+          `[search] ${sourceId}: ${queryFailures.length}/${queries.length} ` +
+          `${queries.length === 1 ? "query" : "queries"} failed: ${queryFailures[0]}${extra}`;
+      }
+      if (pageCapHits.length > 0) {
+        // Rides along on `scrape_runs.errors` for visibility (same mechanism
+        // as `goneWarning`) but — like `goneWarning`, and UNLIKE
+        // `searchWarning` — deliberately kept OUT of the "errored" signal
+        // passed to the health-alert watchdog below: the source DID return
+        // cars this run, there's just more of them than the safety cap
+        // reached, which isn't "stopped returning cars" broken.
+        pageCapWarning = pageCapHits
+          .map((h) => `[pages] ${sourceId}: hit page cap ${h.cap} for search ${h.label}`)
+          .join("; ");
+      }
 
       const normalized: Listing[] = Array.from(rawById.values()).map((raw) =>
         normalizeListing(raw, { source: sourceId, eurCzkRate })
@@ -635,7 +683,9 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
       // upserted normally) — but it's still worth surfacing loudly, so it
       // rides along on the same `errors` column the "Stav zdrojů" page
       // already reads, and likewise withholds `last_ok_at` for this run.
-      const runErrors = [errorText, goneWarning].filter((m): m is string => Boolean(m)).join("; ") || null;
+      const runErrors =
+        [errorText, searchWarning, goneWarning, pageCapWarning].filter((m): m is string => Boolean(m)).join("; ") ||
+        null;
       await db.from("scrape_runs").insert({
         source: sourceId,
         started_at: startedAt,
@@ -653,11 +703,13 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
         })
         .eq("id", sourceId);
 
-      // Source health alert (see health-alert.ts): only the scrape itself
-      // failing/returning nothing counts as "errored" here, not a tripped
-      // gone-check circuit breaker (goneWarning) — that's a different,
-      // already-surfaced issue, and the source DID return cars this run in
-      // that case, so it shouldn't trigger a "stopped returning cars" alert.
+      // Source health alert (see health-alert.ts): the scrape itself
+      // failing/returning nothing (errorText) or every relevant query
+      // throwing (searchWarning, e.g. aaaauto's bot-block detection) counts
+      // as "errored" here — but NOT a tripped gone-check circuit breaker
+      // (goneWarning), which is a different, already-surfaced issue, and the
+      // source DID return cars this run in that case, so it shouldn't
+      // trigger a "stopped returning cars" alert.
       const meta = sourceMetaById.get(sourceId);
       if (meta) {
         await checkSourceHealthAndAlert(
@@ -665,7 +717,7 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
           vapid,
           { id: sourceId, name: meta.name, lastAlertAt: meta.lastAlertAt },
           found,
-          Boolean(errorText)
+          Boolean(errorText || searchWarning)
         );
       }
     }

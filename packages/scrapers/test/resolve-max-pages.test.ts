@@ -12,24 +12,22 @@ const bareQuery: SearchQuery = {
 };
 
 describe("resolveMaxPages", () => {
-  it("uses the shared default for a source with no override and no year filter", () => {
+  it("uses the shared default for a source with no override", () => {
     expect(resolveMaxPages("sauto", bareQuery)).toBe(MAX_RESULT_PAGES);
   });
 
-  it("uses autoscout24's fixed override regardless of the query", () => {
-    expect(resolveMaxPages("autoscout24", bareQuery)).toBe(15);
-    expect(resolveMaxPages("autoscout24", { ...bareQuery, yearFrom: 2020 })).toBe(15);
-  });
-
-  it("uses the shared default for tipcars when the query has no year filter", () => {
+  it("uses the shared default for tipcars regardless of a year filter (no longer a special case — see doc comment)", () => {
     expect(resolveMaxPages("tipcars", bareQuery)).toBe(MAX_RESULT_PAGES);
+    expect(resolveMaxPages("tipcars", { ...bareQuery, yearFrom: 2018 })).toBe(MAX_RESULT_PAGES);
+    expect(resolveMaxPages("tipcars", { ...bareQuery, yearTo: 2018 })).toBe(MAX_RESULT_PAGES);
   });
 
-  it("raises tipcars' page cap to 10 when the query sets yearFrom", () => {
-    expect(resolveMaxPages("tipcars", { ...bareQuery, yearFrom: 2018 })).toBe(10);
+  it("uses autoscout24's fixed override regardless of the query", () => {
+    expect(resolveMaxPages("autoscout24", bareQuery)).toBe(50);
+    expect(resolveMaxPages("autoscout24", { ...bareQuery, yearFrom: 2020 })).toBe(50);
   });
 
-  it("raises tipcars' page cap to 10 when the query sets yearTo", () => {
-    expect(resolveMaxPages("tipcars", { ...bareQuery, yearTo: 2018 })).toBe(10);
+  it("uses carvago's fixed override regardless of the query", () => {
+    expect(resolveMaxPages("carvago", bareQuery)).toBe(60);
   });
 });
