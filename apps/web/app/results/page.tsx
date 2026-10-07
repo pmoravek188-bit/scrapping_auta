@@ -6,6 +6,7 @@ import { NotConfigured } from "@/components/not-configured";
 import { ResultRow, type ResultRowData } from "./result-row";
 import { MarkSeenButton } from "@/components/mark-seen-button";
 import { ScrapeTrigger } from "@/components/scrape-trigger";
+import { currentUserIsAdmin } from "@/lib/admin";
 import { touchResultsSeen } from "@/app/actions/user-state";
 import { fetchPriceEvaluations } from "@/lib/price-evaluation.server";
 import { SORT_LABELS, type SortKey } from "@/lib/filter-options";
@@ -48,6 +49,7 @@ export default async function ResultsPage({ searchParams }: { searchParams: Prom
 
   const supabase = await createSupabaseServerClient();
   if (!supabase) return <NotConfigured />;
+  const admin = await currentUserIsAdmin(supabase);
 
   const [{ data: searches }, { data: sourceRows }, { data: matchRows }, seen] = await Promise.all([
     supabase.from("searches").select("id, name").order("created_at"),
@@ -268,8 +270,18 @@ export default async function ResultsPage({ searchParams }: { searchParams: Prom
       <div className="min-w-0">
         {rows.length === 0 ? (
           <div className="card space-y-3 text-sm text-gray-600">
-            <p>Zatím nic. Scraping běží denně v 7:00, nebo ho spusť ručně.</p>
-            <ScrapeTrigger sources={availableSources} />
+            {(searches ?? []).length === 0 ? (
+              <p>
+                Zatím nemáš žádné hledání.{" "}
+                <Link href="/searches/new" className="font-medium text-brand-600 underline">
+                  Založ si první hledání
+                </Link>{" "}
+                a auta se začnou hledat při nejbližším scrapingu.
+              </p>
+            ) : (
+              <p>Zatím nic. Scraping běží 3× denně (7, 13 a 19 h).</p>
+            )}
+            {admin && <ScrapeTrigger sources={availableSources} />}
           </div>
         ) : (
           <>

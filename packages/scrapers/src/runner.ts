@@ -12,7 +12,12 @@ import {
 import type { SourceAdapter } from "./adapter.js";
 import { getAdapter } from "./registry.js";
 import { fetchEurCzkRate } from "./exchange-rate.js";
-import { sendMatchDigestEmail, type NotifySearchGroup, type NotifyFavoriteChange } from "./notify/email.js";
+import {
+  sendMatchDigestEmail,
+  getEmailSenderConfigFromEnv,
+  type NotifySearchGroup,
+  type NotifyFavoriteChange,
+} from "./notify/email.js";
 import { fetchForGoneCheck, MAX_RESULT_PAGES } from "./http.js";
 import { selectListingsToStore } from "./selection.js";
 import { isGone } from "./gone-detection.js";
@@ -886,11 +891,40 @@ async function cleanupUnmatchedListings(db: DbClient): Promise<void> {
 }
 
 /**
+ * Resolves a user's Auth e-mail via the admin API (service-role only —
+ * `db` here is always the service-role client, see `runScrape`). Returns
+ * null (never throws) if the lookup fails or the user has no e-mail on
+ * file — the caller logs and skips that user's digest rather than falling
+ * back to any other address (see task note: a user whose e-mail can't be
+ * resolved is skipped, not redirected to the admin address).
+ */
+export async function resolveUserEmail(db: DbClient, userId: string): Promise<string | null> {
+  try {
+    const { data, error } = await db.auth.admin.getUserById(userId);
+    if (error || !data?.user?.email) return null;
+    return data.user.email;
+  } catch (err) {
+    console.warn(`[notify] failed to resolve e-mail for user ${userId}:`, (err as Error).message);
+    return null;
+  }
+}
+
+/**
  * Only matches created since the last notification get notified (the
  * `notified_at is null` filter below) — so running the scraper 3x/day (see
  * .github/workflows/scrape.yml) never resends anything already reported,
  * and a run with nothing new simply sends nothing (see sendMatchDigestEmail
  * / sendPushToUser's own "nothing to send" no-ops).
+ *
+ * The digest e-mail is per-user (see sendMatchDigestEmail's doc comment):
+ * every search-group and favourite-change is bucketed by its owning user,
+ * that user's Auth e-mail is resolved via `resolveUserEmail`, and one
+ * digest is sent per user. `matches.notified_at` is only stamped for the
+ * matches belonging to a user whose digest actually sent successfully — a
+ * user with no resolvable e-mail, or whose send failed (e.g. the Resend
+ * free-tier "only the account owner" limitation), is logged and skipped,
+ * and their matches stay unnotified so the next run retries them. Push
+ * (below) is unaffected either way — it's sent independently per search.
  */
 async function notifyNewMatches(db: DbClient, vapid: VapidConfig | null): Promise<void> {
   const { data: pending, error } = await db
@@ -956,11 +990,43 @@ async function notifyNewMatches(db: DbClient, vapid: VapidConfig | null): Promis
     return;
   }
 
-  const searchGroups = Array.from(groupsBySearch.values());
-  const sent = await sendMatchDigestEmail(searchGroups, favoriteChanges);
-  if (sent && rows.length > 0) {
-    const ids = rows.map((r) => r.id);
-    await db.from("matches").update({ notified_at: new Date().toISOString() }).in("id", ids);
+  interface UserDigest {
+    groups: NotifySearchGroup[];
+    favoriteChanges: NotifyFavoriteChange[];
+    matchIds: string[];
+  }
+  const digestsByUser = new Map<string, UserDigest>();
+  function digestFor(userId: string): UserDigest {
+    let d = digestsByUser.get(userId);
+    if (!d) {
+      d = { groups: [], favoriteChanges: [], matchIds: [] };
+      digestsByUser.set(userId, d);
+    }
+    return d;
+  }
+  for (const [searchId, group] of groupsBySearch) {
+    if (group.listings.length === 0) continue;
+    const d = digestFor(group.userId);
+    d.groups.push({ searchName: group.searchName, listings: group.listings });
+    for (const row of rows) {
+      if (row.search_id === searchId) d.matchIds.push(row.id);
+    }
+  }
+  for (const event of favoriteEvents) {
+    digestFor(event.userId).favoriteChanges.push(event.change);
+  }
+
+  const emailConfig = getEmailSenderConfigFromEnv();
+  for (const [userId, digest] of digestsByUser) {
+    const email = await resolveUserEmail(db, userId);
+    if (!email) {
+      console.warn(`[notify] no e-mail on file for user ${userId}, skipping their digest`);
+      continue;
+    }
+    const sent = await sendMatchDigestEmail(email, digest.groups, digest.favoriteChanges, emailConfig);
+    if (sent && digest.matchIds.length > 0) {
+      await db.from("matches").update({ notified_at: new Date().toISOString() }).in("id", digest.matchIds);
+    }
   }
 
   // Push: one notification per search with new matches, to that search's

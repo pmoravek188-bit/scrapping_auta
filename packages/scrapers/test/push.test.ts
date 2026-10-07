@@ -2,7 +2,7 @@ import { describe, expect, it } from "vitest";
 import type { DbClient } from "../src/db.js";
 import {
   getVapidConfig,
-  sendPushToAllUsers,
+  sendPushToAdmins,
   sendPushToSubscription,
   sendPushToUser,
   type PushSubscriptionRow,
@@ -16,8 +16,10 @@ import {
 function makeFakeDb(opts: {
   secrets?: { key: string; value: string }[];
   subscriptions?: PushSubscriptionRow[];
+  admins?: string[];
 }) {
   const secrets = opts.secrets ?? [];
+  const admins = opts.admins ?? [];
   const subscriptions = [...(opts.subscriptions ?? [])];
   const deletedIds: string[] = [];
 
@@ -32,6 +34,17 @@ function makeFakeDb(opts: {
         },
         then(resolve: (v: { data: unknown; error: null }) => void) {
           resolve({ data: secrets, error: null });
+        },
+      };
+      return obj;
+    }
+    if (table === "app_admins") {
+      const obj = {
+        select() {
+          return obj;
+        },
+        then(resolve: (v: { data: unknown; error: null }) => void) {
+          resolve({ data: admins.map((user_id) => ({ user_id })), error: null });
         },
       };
       return obj;
@@ -222,13 +235,14 @@ describe("sendPushToUser", () => {
   });
 });
 
-describe("sendPushToAllUsers", () => {
-  it("sends to every registered subscription regardless of owner", async () => {
+describe("sendPushToAdmins", () => {
+  it("sends only to subscriptions owned by admins", async () => {
     const subs: PushSubscriptionRow[] = [
       { id: "s1", user_id: "user-1", endpoint: "e1", p256dh: "p", auth: "a" },
       { id: "s2", user_id: "user-2", endpoint: "e2", p256dh: "p", auth: "a" },
+      { id: "s3", user_id: "user-1", endpoint: "e3", p256dh: "p", auth: "a" },
     ];
-    const { db } = makeFakeDb({ subscriptions: subs });
+    const { db } = makeFakeDb({ subscriptions: subs, admins: ["user-1"] });
     const sentTo: string[] = [];
     const fake: WebPushLike = {
       setVapidDetails: () => {},
@@ -236,8 +250,8 @@ describe("sendPushToAllUsers", () => {
         sentTo.push(subscription.endpoint);
       },
     };
-    await sendPushToAllUsers(db, vapid, { title: "t", body: "b" }, fake);
-    expect(sentTo.sort()).toEqual(["e1", "e2"]);
+    await sendPushToAdmins(db, vapid, { title: "t", body: "b" }, fake);
+    expect(sentTo.sort()).toEqual(["e1", "e3"]);
   });
 
   it("is a no-op when vapid is null", async () => {
@@ -250,6 +264,6 @@ describe("sendPushToAllUsers", () => {
         throw new Error("should not be called");
       },
     };
-    await expect(sendPushToAllUsers(db, null, { title: "t", body: "b" }, fake)).resolves.toBeUndefined();
+    await expect(sendPushToAdmins(db, null, { title: "t", body: "b" }, fake)).resolves.toBeUndefined();
   });
 });

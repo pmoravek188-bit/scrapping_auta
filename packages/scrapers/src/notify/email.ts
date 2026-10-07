@@ -1,11 +1,25 @@
 /**
  * Email notifications via the Resend REST API (fetch, no SDK dependency).
- * Enabled only when RESEND_API_KEY and NOTIFY_EMAIL_TO are both set — missing
- * config means notifications are silently skipped (with a log line).
+ *
+ * Two distinct kinds of mail, with distinct recipients:
+ *   - the new-matches/favourites digest (`sendMatchDigestEmail`) — sent
+ *     per-user, to that user's own Supabase Auth e-mail (resolved by the
+ *     caller, see runner.ts's `resolveUserEmail`);
+ *   - the source-health alert (`sendSourceAlertEmail`) — an admin-only
+ *     notice, sent to NOTIFY_EMAIL_TO (the ADMIN address).
+ *
+ * Both are enabled only when RESEND_API_KEY is set (and, for the source
+ * alert, NOTIFY_EMAIL_TO too) — missing config means notifications are
+ * silently skipped (with a log line).
  *
  * On Resend's free tier without a verified own domain, mail can only be sent
  * from `onboarding@resend.dev` to the Resend account owner's own address —
- * see README for details.
+ * see README for details. With multiple users, this means only the Resend
+ * account owner will actually receive their digest unless/until a custom
+ * domain is verified in Resend — every OTHER user's send will fail with a
+ * clear per-recipient log line (see `sendMatchDigestEmail` below) and that
+ * run's matches simply stay unnotified (notified_at left null) until it
+ * succeeds on a later run.
  */
 
 import { resolveImageUrl } from "@scrapping-auta/core";
@@ -38,21 +52,30 @@ export interface NotifyFavoriteChange extends NotifyListing {
   previousPriceCzk: number | null;
 }
 
-export interface EmailNotifyConfig {
+/** Sender-side config shared by every e-mail this module sends — the
+ * recipient (`to`) is always passed separately per call, since it now
+ * differs per digest (a user's own address) vs. per alert (the admin
+ * address). */
+export interface EmailSenderConfig {
   apiKey: string;
-  to: string;
   from: string;
 }
 
-/** Reads email notification config from env vars; returns null if not configured. */
-export function getEmailConfigFromEnv(
+/** Reads the shared sender config (API key + from-address) from env vars;
+ * returns null if RESEND_API_KEY is not set. */
+export function getEmailSenderConfigFromEnv(
   env: NodeJS.ProcessEnv = process.env
-): EmailNotifyConfig | null {
+): EmailSenderConfig | null {
   const apiKey = env.RESEND_API_KEY;
-  const to = env.NOTIFY_EMAIL_TO;
-  if (!apiKey || !to) return null;
-  const from = env.NOTIFY_EMAIL_FROM || "Scrapping auta <onboarding@resend.dev>";
-  return { apiKey, to, from };
+  if (!apiKey) return null;
+  const from = env.NOTIFY_EMAIL_FROM || "Scrapping cars <onboarding@resend.dev>";
+  return { apiKey, from };
+}
+
+/** The admin address (NOTIFY_EMAIL_TO) — used only for source-health alerts,
+ * never for a per-user digest. Returns null if not set. */
+export function getAdminEmailFromEnv(env: NodeJS.ProcessEnv = process.env): string | null {
+  return env.NOTIFY_EMAIL_TO || null;
 }
 
 function formatCzk(value: number | null): string {
@@ -164,7 +187,7 @@ export function renderDigestHtml(
     <table role="presentation" width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#fff;border-radius:12px;padding:24px">
       <tr><td>
         <h1 style="font-size:20px;margin:0 0 4px">Nové nabídky aut</h1>
-        <p style="font-size:13px;color:#666;margin:0 0 16px">Scrapping auta — automatické hlídání inzerátů</p>
+        <p style="font-size:13px;color:#666;margin:0 0 16px">Scrapping cars — automatické hlídání inzerátů</p>
         ${sections}
         ${favoritesSection}
       </td></tr>
@@ -210,24 +233,32 @@ export function renderDigestText(
 }
 
 /**
- * Sends the new-matches + favourites-changes digest email via Resend. No-ops
- * (with a log line) if RESEND_API_KEY / NOTIFY_EMAIL_TO are not configured,
- * or there is nothing at all to send. `favoriteChanges` (see
+ * Sends one user's new-matches + favourites-changes digest email via Resend.
+ * No-ops (with a log line) if RESEND_API_KEY is not configured, or there is
+ * nothing at all to send for this recipient. `favoriteChanges` (see
  * favorites-alert.ts) is rendered as an extra "Oblíbené: zlevnění / prodáno"
  * section — on its own it can still trigger a send even with no new matches.
+ *
+ * Returns false (never throws) on a Resend API error for this recipient —
+ * the caller (runner.ts's `notifyNewMatches`) sends one of these per user
+ * and must keep going to the next user/favourite event when one recipient's
+ * send fails (e.g. the well-known Resend free-tier "only the account owner"
+ * limitation — see this file's header comment), rather than aborting the
+ * whole run.
  */
 export async function sendMatchDigestEmail(
+  to: string,
   groups: NotifySearchGroup[],
   favoriteChanges: NotifyFavoriteChange[] = [],
-  config: EmailNotifyConfig | null = getEmailConfigFromEnv()
+  config: EmailSenderConfig | null = getEmailSenderConfigFromEnv()
 ): Promise<boolean> {
   if (!config) {
-    console.log("[notify:email] RESEND_API_KEY / NOTIFY_EMAIL_TO not set, skipping");
+    console.log("[notify:email] RESEND_API_KEY not set, skipping digest");
     return false;
   }
   const nonEmpty = groups.filter((g) => g.listings.length > 0);
   if (nonEmpty.length === 0 && favoriteChanges.length === 0) {
-    console.log("[notify:email] no new matches or favourite changes, nothing to send");
+    console.log(`[notify:email] ${to}: no new matches or favourite changes, nothing to send`);
     return false;
   }
   const totalCars = nonEmpty.reduce((sum, g) => sum + g.listings.length, 0);
@@ -235,7 +266,7 @@ export async function sendMatchDigestEmail(
     totalCars > 0 ? `${totalCars} nových nabídek` : null,
     favoriteChanges.length > 0 ? `${favoriteChanges.length} změn v oblíbených` : null,
   ].filter((p): p is string => Boolean(p));
-  const subject = `Scrapping auta: ${subjectParts.join(", ")}`;
+  const subject = `Scrapping cars: ${subjectParts.join(", ")}`;
 
   const res = await fetch(RESEND_ENDPOINT, {
     method: "POST",
@@ -245,7 +276,7 @@ export async function sendMatchDigestEmail(
     },
     body: JSON.stringify({
       from: config.from,
-      to: [config.to],
+      to: [to],
       subject,
       html: renderDigestHtml(nonEmpty, favoriteChanges),
       text: renderDigestText(nonEmpty, favoriteChanges),
@@ -254,10 +285,10 @@ export async function sendMatchDigestEmail(
 
   if (!res.ok) {
     const body = await res.text().catch(() => "");
-    console.warn(`[notify:email] Resend API returned ${res.status}: ${body}`);
+    console.warn(`[notify:email] Resend API returned ${res.status} for ${to}: ${body}`);
     return false;
   }
-  console.log(`[notify:email] sent digest for ${nonEmpty.length} searches, ${totalCars} cars`);
+  console.log(`[notify:email] sent digest to ${to} for ${nonEmpty.length} searches, ${totalCars} cars`);
   return true;
 }
 
@@ -265,14 +296,16 @@ export async function sendMatchDigestEmail(
  * Sends the "source looks broken" alert e-mail (see
  * packages/scrapers/src/health-alert.ts for the decision logic that calls
  * this — it's already rate-limited to at most once per source per 24h
- * before this is ever called). No-ops (with a log line) if RESEND_API_KEY /
- * NOTIFY_EMAIL_TO are not configured, same as the match digest.
+ * before this is ever called). Admin-only: always goes to NOTIFY_EMAIL_TO
+ * (`to`, defaulted from env), never to a regular user. No-ops (with a log
+ * line) if RESEND_API_KEY or NOTIFY_EMAIL_TO are not configured.
  */
 export async function sendSourceAlertEmail(
   sourceName: string,
-  config: EmailNotifyConfig | null = getEmailConfigFromEnv()
+  config: EmailSenderConfig | null = getEmailSenderConfigFromEnv(),
+  to: string | null = getAdminEmailFromEnv()
 ): Promise<boolean> {
-  if (!config) {
+  if (!config || !to) {
     console.log("[notify:email] RESEND_API_KEY / NOTIFY_EMAIL_TO not set, skipping source alert");
     return false;
   }
@@ -301,7 +334,7 @@ export async function sendSourceAlertEmail(
     },
     body: JSON.stringify({
       from: config.from,
-      to: [config.to],
+      to: [to],
       subject,
       html,
       text,

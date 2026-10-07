@@ -227,6 +227,14 @@ export interface Database {
         Update: Partial<Database["public"]["Tables"]["app_secrets"]["Row"]>;
         Relationships: [];
       };
+      app_admins: {
+        Row: {
+          user_id: string;
+        };
+        Insert: Database["public"]["Tables"]["app_admins"]["Row"];
+        Update: Partial<Database["public"]["Tables"]["app_admins"]["Row"]>;
+        Relationships: [];
+      };
     };
     Views: {
       make_models: {

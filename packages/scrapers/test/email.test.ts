@@ -1,6 +1,7 @@
 import { describe, expect, it, vi, afterEach } from "vitest";
 import {
-  getEmailConfigFromEnv,
+  getAdminEmailFromEnv,
+  getEmailSenderConfigFromEnv,
   renderDigestHtml,
   renderDigestText,
   sendMatchDigestEmail,
@@ -25,18 +26,19 @@ const group: NotifySearchGroup = {
   ],
 };
 
-describe("getEmailConfigFromEnv", () => {
-  it("returns null when RESEND_API_KEY or NOTIFY_EMAIL_TO missing", () => {
-    expect(getEmailConfigFromEnv({})).toBeNull();
-    expect(getEmailConfigFromEnv({ RESEND_API_KEY: "x" } as NodeJS.ProcessEnv)).toBeNull();
+describe("getEmailSenderConfigFromEnv / getAdminEmailFromEnv", () => {
+  it("returns null when RESEND_API_KEY is missing", () => {
+    expect(getEmailSenderConfigFromEnv({})).toBeNull();
   });
 
   it("uses a default from-address when NOTIFY_EMAIL_FROM is not set", () => {
-    const cfg = getEmailConfigFromEnv({
-      RESEND_API_KEY: "key",
-      NOTIFY_EMAIL_TO: "me@example.com",
-    } as NodeJS.ProcessEnv);
-    expect(cfg?.from).toBe("Scrapping auta <onboarding@resend.dev>");
+    const cfg = getEmailSenderConfigFromEnv({ RESEND_API_KEY: "key" } as NodeJS.ProcessEnv);
+    expect(cfg?.from).toBe("Scrapping cars <onboarding@resend.dev>");
+  });
+
+  it("reads the admin address from NOTIFY_EMAIL_TO", () => {
+    expect(getAdminEmailFromEnv({})).toBeNull();
+    expect(getAdminEmailFromEnv({ NOTIFY_EMAIL_TO: "admin@example.com" } as NodeJS.ProcessEnv)).toBe("admin@example.com");
   });
 });
 
@@ -135,16 +137,15 @@ describe("sendMatchDigestEmail", () => {
   });
 
   it("skips silently when config is missing", async () => {
-    const sent = await sendMatchDigestEmail([group], [], null);
+    const sent = await sendMatchDigestEmail("me@example.com", [group], [], null);
     expect(sent).toBe(false);
   });
 
   it("skips when there are no listings and no favourite changes to send", async () => {
-    const sent = await sendMatchDigestEmail(
-      [{ searchName: "x", listings: [] }],
-      [],
-      { apiKey: "k", to: "a@b.com", from: "f@b.com" }
-    );
+    const sent = await sendMatchDigestEmail("a@b.com", [{ searchName: "x", listings: [] }], [], {
+      apiKey: "k",
+      from: "f@b.com",
+    });
     expect(sent).toBe(false);
   });
 
@@ -152,13 +153,13 @@ describe("sendMatchDigestEmail", () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => "" });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const sent = await sendMatchDigestEmail([group], [], {
+    const sent = await sendMatchDigestEmail("me@example.com", [group], [], {
       apiKey: "key",
-      to: "me@example.com",
-      from: "Scrapping auta <onboarding@resend.dev>",
+      from: "Scrapping cars <onboarding@resend.dev>",
     });
 
     expect(sent).toBe(true);
+    expect(JSON.parse(fetchMock.mock.calls[0][1].body).to).toEqual(["me@example.com"]);
     expect(fetchMock).toHaveBeenCalledWith(
       "https://api.resend.com/emails",
       expect.objectContaining({ method: "POST" })
@@ -182,10 +183,9 @@ describe("sendMatchDigestEmail", () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => "" });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const sent = await sendMatchDigestEmail([], [priceDropChange], {
+    const sent = await sendMatchDigestEmail("me@example.com", [], [priceDropChange], {
       apiKey: "key",
-      to: "me@example.com",
-      from: "Scrapping auta <onboarding@resend.dev>",
+      from: "Scrapping cars <onboarding@resend.dev>",
     });
 
     expect(sent).toBe(true);
@@ -255,7 +255,7 @@ describe("sendSourceAlertEmail", () => {
   });
 
   it("skips silently when config is missing", async () => {
-    const sent = await sendSourceAlertEmail("sauto", null);
+    const sent = await sendSourceAlertEmail("sauto", null, "admin@example.com");
     expect(sent).toBe(false);
   });
 
@@ -263,11 +263,11 @@ describe("sendSourceAlertEmail", () => {
     const fetchMock = vi.fn().mockResolvedValue({ ok: true, status: 200, text: async () => "" });
     global.fetch = fetchMock as unknown as typeof fetch;
 
-    const sent = await sendSourceAlertEmail("sauto", {
-      apiKey: "key",
-      to: "me@example.com",
-      from: "Scrapping auta <onboarding@resend.dev>",
-    });
+    const sent = await sendSourceAlertEmail(
+      "sauto",
+      { apiKey: "key", from: "Scrapping cars <onboarding@resend.dev>" },
+      "admin@example.com"
+    );
 
     expect(sent).toBe(true);
     const body = JSON.parse(fetchMock.mock.calls[0][1].body);

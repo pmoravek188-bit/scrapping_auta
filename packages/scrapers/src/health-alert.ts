@@ -9,7 +9,7 @@
  */
 import type { DbClient } from "./db.js";
 import { sendSourceAlertEmail } from "./notify/email.js";
-import { sendPushToAllUsers, type VapidConfig } from "./push.js";
+import { sendPushToAdmins, type VapidConfig } from "./push.js";
 
 /** A source's median "found" count across its last N successful runs must be
  * at least this high for a 0/errored run to be considered suspicious —
@@ -81,10 +81,11 @@ export function shouldAlertSource(input: HealthAlertDecisionInput): boolean {
 
 /**
  * Loads a source's recent run history, decides via `shouldAlertSource`, and
- * if it fires: sends the alert e-mail + a push to every registered
- * subscription, then stamps `sources.last_alert_at` so the cooldown applies
- * to the next run. Never throws — a failed alert send must not abort the
- * overall scrape run.
+ * if it fires: sends the alert e-mail (to the admin address) + a push to
+ * every admin's registered subscriptions (see `public.app_admins` /
+ * `sendPushToAdmins`), then stamps `sources.last_alert_at` so the cooldown
+ * applies to the next run. Never throws — a failed alert send must not
+ * abort the overall scrape run.
  */
 export async function checkSourceHealthAndAlert(
   db: DbClient,
@@ -126,7 +127,7 @@ export async function checkSourceHealthAndAlert(
     console.warn(`[health-alert] ${source.id}: failed to send alert e-mail:`, (err as Error).message);
   }
   try {
-    await sendPushToAllUsers(db, vapid, {
+    await sendPushToAdmins(db, vapid, {
       title: "⚠️ Scrapping cars",
       body: `Zdroj ${source.name} nevrací auta`,
       url: "/sources",

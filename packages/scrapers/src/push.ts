@@ -135,19 +135,39 @@ export async function sendPushToUser(
   }
 }
 
-/** Sends `payload` to every registered subscription, regardless of owner —
- * used for source health alerts, which (like the e-mail digest's single
- * NOTIFY_EMAIL_TO) aren't scoped to one particular user. */
-export async function sendPushToAllUsers(
+/** Reads the set of admin user ids from `public.app_admins` (service-role
+ * read — RLS on that table only allows a signed-in user to see their OWN
+ * row, but the runner's service-role key bypasses RLS entirely, same as
+ * every other table it touches). Returns an empty array (with a log line)
+ * on a read failure, same fail-safe shape as `getVapidConfig`. */
+export async function loadAdminUserIds(db: DbClient): Promise<string[]> {
+  const { data, error } = await db.from("app_admins").select("user_id");
+  if (error) {
+    console.warn("[push] failed to load app_admins:", error.message);
+    return [];
+  }
+  return (data ?? []).map((r) => r.user_id);
+}
+
+/** Sends `payload` to every subscription owned by an admin (see
+ * `public.app_admins`) — used for source health alerts, which (like the
+ * admin-only e-mail alert, NOTIFY_EMAIL_TO) are an operational notice, not a
+ * per-user one. No-op if push isn't configured or there are no admins /
+ * admin subscriptions registered. */
+export async function sendPushToAdmins(
   db: DbClient,
   vapid: VapidConfig | null,
   payload: PushPayload,
   webpushImpl: WebPushLike = webpush
 ): Promise<void> {
   if (!vapid) return;
+  const adminIds = await loadAdminUserIds(db);
+  if (adminIds.length === 0) return;
   webpushImpl.setVapidDetails(vapid.subject, vapid.publicKey, vapid.privateKey);
-  const subs = await loadSubscriptions(db);
-  for (const sub of subs) {
-    await sendPushToSubscription(db, sub, payload, webpushImpl);
+  for (const userId of adminIds) {
+    const subs = await loadSubscriptions(db, userId);
+    for (const sub of subs) {
+      await sendPushToSubscription(db, sub, payload, webpushImpl);
+    }
   }
 }
