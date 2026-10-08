@@ -68,7 +68,12 @@ const ENGINE_CODE_RE =
 
 /** Uncatalogued-model fallback: takes up to 2 leading alphanumeric words (no
  * pure-digit or known engine-code words) from the text following the make,
- * e.g. "tourneo custom 2.0 tdci" -> "tourneo-custom". Best-effort only. */
+ * e.g. "tourneo custom 2.0 tdci" -> "tourneo-custom". Best-effort only.
+ *
+ * Deliberately rejects any word starting with a digit (so e.g. Peugeot's
+ * "308 1.6 HDI" doesn't swallow an engine-displacement number as a model) —
+ * BMW's numbered-series titles need their own fallback (`bmwFallbackModel`
+ * below) specifically because a bare series digit IS meaningful there. */
 function fallbackModelWords(words: string[]): string | null {
   const picked: string[] = [];
   for (const w of words) {
@@ -77,6 +82,57 @@ function fallbackModelWords(words: string[]): string | null {
     picked.push(w);
   }
   return picked.length ? picked.join("-") : null;
+}
+
+/** A bare BMW series digit (1-8), e.g. "3" in "BMW 3 325i Touring". */
+const BMW_SERIES_DIGIT_RE = /^[1-8]$/;
+/** A bare BMW engine-designation code with no series word at all, e.g.
+ * "320d", "325i", "530d" — same shape `applyBmwModelAlias` (make-model.ts)
+ * recognizes for a structured model field, first digit = the series. */
+const BMW_ENGINE_CODE_RE = /^([1-8])(\d{2})([a-z]*)$/;
+/** An "M Performance" trim with no series word, e.g. "M340i", "M550i". */
+const BMW_M_PERFORMANCE_RE = /^m([1-8])(\d{2}[a-z]*)$/;
+
+/** BMW-specific uncatalogued-model fallback for titles that spell a numbered
+ * series the "bare European way" — a plain digit right after the make, with
+ * no "Řada"/"Series"/"er" word at all (e.g. "BMW 3 325i TOURING", "BMW 5
+ * 520d xDrive", "BMW 6 4,4 V8") — which `findModelInText` can't catch (every
+ * BMW catalog entry requires the word "Řada"/"series" to be literally
+ * present in the title) and the generic `fallbackModelWords` above can't
+ * catch either (it deliberately refuses any word starting with a digit).
+ * Also handles an engine-code-only title with no separate series digit at
+ * all (e.g. "BMW 320d Touring"). Tried only when `knownMake`/the detected
+ * make is "bmw", so other makes where a bare digit IS the real model
+ * (Mazda 2/3/6, Peugeot 208/308/2008/3008/508, Fiat 500, ...) are unaffected
+ * — those already match directly via `findModelInText` against the catalog
+ * (the digit itself is the catalog slug/label, no translation needed).
+ * Returns an already-canonical "`n`-series[-detail]" slug (or null), which
+ * `normalizeModel`/`applyBmwModelAlias` (make-model.ts) then passes through
+ * unchanged (idempotent). */
+function bmwFallbackModel(words: string[]): string | null {
+  const [first, second] = words;
+  if (!first) return null;
+
+  // Engine-code-only title, e.g. "320d" ("BMW 320d Touring").
+  let m = BMW_ENGINE_CODE_RE.exec(first);
+  if (m) return `${m[1]}-series-${first}`;
+
+  // "M Performance" trim with no series word, e.g. "M340i" ("BMW M340i xDrive").
+  m = BMW_M_PERFORMANCE_RE.exec(first);
+  if (m) return `${m[1]}-series-m${m[1]}${m[2]}`;
+
+  // Bare series digit, e.g. "3" ("BMW 3 325i TOURING", "BMW 6 4,4 V8",
+  // "BMW 5 520d xDrive"). If the next word is itself a matching engine code
+  // for the same series, fold it in as detail; otherwise just the series.
+  if (BMW_SERIES_DIGIT_RE.test(first)) {
+    if (second) {
+      const engineMatch = BMW_ENGINE_CODE_RE.exec(second);
+      if (engineMatch && engineMatch[1] === first) return `${first}-series-${second}`;
+    }
+    return `${first}-series`;
+  }
+
+  return null;
 }
 
 /**
@@ -99,7 +155,11 @@ export function inferMakeModel(
 
   if (knownMake) {
     const models = POPULAR_MODELS[knownMake] ?? [];
-    const model = findModelInText(normalized, models) ?? fallbackModelWords(normalized.split(" "));
+    const words = normalized.split(" ");
+    const model =
+      findModelInText(normalized, models) ??
+      (knownMake === "bmw" ? bmwFallbackModel(words) : null) ??
+      fallbackModelWords(words);
     return { make: knownMake, model: model ? (normalizeModel(model, knownMake) ?? model) : null };
   }
 
@@ -112,7 +172,11 @@ export function inferMakeModel(
     const rest = padded.slice(idx + needle.length).trim();
     const restWords = rest.split(" ").filter(Boolean);
     const models = POPULAR_MODELS[canonical] ?? [];
-    const model = rest ? (findModelInText(rest, models) ?? fallbackModelWords(restWords)) : null;
+    const model = rest
+      ? (findModelInText(rest, models) ??
+        (canonical === "bmw" ? bmwFallbackModel(restWords) : null) ??
+        fallbackModelWords(restWords))
+      : null;
     return { make: canonical, model: model ? (normalizeModel(model, canonical) ?? model) : null };
   }
 

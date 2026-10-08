@@ -151,6 +151,12 @@ describe("normalizeModel with a BMW make — numbered-series aliasing", () => {
     expect(normalizeModel("3", MAKE)).toBe("3-series");
   });
 
+  it("canonicalizes a bare series number for every numbered series (1-8)", () => {
+    for (const n of [1, 2, 3, 4, 5, 6, 7, 8]) {
+      expect(normalizeModel(String(n), MAKE)).toBe(`${n}-series`);
+    }
+  });
+
   it("derives the series from a bare engine-designation code (no series word at all)", () => {
     // Confirmed live: autoscout24.cz's structured `vehicle.model` for a
     // 3-series car is literally "320"/"318" (no suffix letter).

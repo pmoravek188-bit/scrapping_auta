@@ -61,4 +61,32 @@ describe("autopalace adapter", () => {
     expect(items[2].body).toBe("SUV");
     expect(items[2].price).toBe(38900);
   });
+
+  it("infers the right BMW series from a bare series digit with no 'Řada'/'Series' word", () => {
+    // Regression: this dealer's own card markup (confirmed live) exposes the
+    // make via `data-vehicle-manufacturer` and the model as the title link's
+    // own trailing text node after the make <span> — for a BMW numbered
+    // series that's sometimes just the bare digit itself (e.g. "3"), with
+    // the engine code living separately in `.engine`. `inferMakeModel`'s old
+    // digit-stopping fallback silently dropped this (model came back null).
+    // Not present in the saved search fixture above (no BMW card in that
+    // capture), so built as a minimal snippet matching the same real
+    // template.
+    const bmwHtml = `<article class="vehicle-smallCard default" data-vehicle-id="99001">
+      <h3 class="title">
+        <a href="/skladove-vozy/ojete-bmw-3-320d-touring-99001.html"
+           data-vehicle-manufacturer="BMW"
+           data-vehicle-bodywork="kombi">
+          <span>BMW</span>
+          3
+        </a>
+      </h3>
+      <div class="engine">320d Touring</div>
+      <div class="prices"><span class="price">499&nbsp;900&nbsp;Kč</span></div>
+    </article>`;
+    const items = parseAutoPalaceHtml(bmwHtml);
+    expect(items).toHaveLength(1);
+    expect(items[0].make).toBe("bmw");
+    expect(items[0].model).toBe("3-series");
+  });
 });
