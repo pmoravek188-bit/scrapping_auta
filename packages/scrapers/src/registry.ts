@@ -10,6 +10,8 @@ import { autoesaAdapter } from "./sources/autoesa.js";
 import { skodaplusAdapter } from "./sources/skodaplus.js";
 import { autoscout24Adapter } from "./sources/autoscout24.js";
 import { autobazarAdapter } from "./sources/autobazar.js";
+import { autojarovAdapter } from "./sources/autojarov.js";
+import { autopalaceAdapter } from "./sources/autopalace.js";
 
 /** All known adapters, keyed by source id (matches the `sources` table). */
 export const ADAPTERS: Record<string, SourceAdapter> = {
@@ -24,6 +26,8 @@ export const ADAPTERS: Record<string, SourceAdapter> = {
   skodaplus: skodaplusAdapter,
   autoscout24: autoscout24Adapter,
   autobazar: autobazarAdapter,
+  autojarov: autojarovAdapter,
+  autopalace: autopalaceAdapter,
 };
 
 export function getAdapter(id: string): SourceAdapter | undefined {
