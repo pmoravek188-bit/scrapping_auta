@@ -83,8 +83,12 @@ export async function dispatchScrape(
     }
   );
   if (!res.ok) {
+    // GitHub's response body is raw/English (and sometimes a JSON blob) —
+    // log it for debugging but never show it to the user; the UI only ever
+    // gets a short, generic Czech message (see api/scrape/route.ts's POST).
     const text = await res.text().catch(() => "");
-    return { ok: false, status: res.status, message: `GitHub API vrátilo ${res.status}: ${text}` };
+    console.warn(`[scrape-trigger] GitHub dispatch failed (${res.status}):`, text);
+    return { ok: false, status: res.status, message: "Spuštění přes GitHub se nezdařilo." };
   }
   return { ok: true };
 }
@@ -215,6 +219,11 @@ export async function recordManualScrapeRequest(
   const { error } = await supabase
     .from("manual_scrape_requests")
     .insert({ user_id: userId, source: source ?? null });
-  if (error) return { ok: false, message: error.message };
+  if (error) {
+    // Supabase's error text is raw/English — log it for debugging but never
+    // show it to the user (see api/scrape/route.ts's POST).
+    console.warn("[scrape-trigger] failed to record manual request:", error.message);
+    return { ok: false, message: "Uložení požadavku se nezdařilo." };
+  }
   return { ok: true };
 }
