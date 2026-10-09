@@ -10,7 +10,8 @@
     "typecheck": "tsc --noEmit",
     "test": "vitest run",
     "scrape": "tsx src/cli.ts",
-    "audit:sources": "tsx scripts/audit.ts"
+    "audit:sources": "tsx scripts/audit.ts",
+    "send-test-push": "tsx scripts/send-test-push.ts"
   },
   "dependencies": {
     "@scrapping-auta/core": "workspace:*",

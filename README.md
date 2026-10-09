@@ -504,14 +504,35 @@ Secret ani Vercel env var — VAPID klíče žijí v DB.
 - `apps/web/lib/push.ts`: `subscribeToPush`/`unsubscribeFromPush` —
   požádá o `Notification` oprávnění, přihlásí se přes `PushManager` a uloží
   `endpoint`/`p256dh`/`auth` do `public.push_subscriptions` (RLS: jen
-  vlastní řádky). Toggle "Notifikace" je na `/sources`
+  vlastní řádky). `subscribe()` se volá hned po `requestPermission()` (ne až
+  po dotazech na Supabase) — na iOS Safari se "user gesture" aktivace z
+  kliknutí může ztratit, pokud mezi tím běží něco pomalého jako síťový
+  dotaz. Toggle "Notifikace" je na `/sources`
   (`components/notifications-toggle.tsx`) — na iOS zobrazí hlášku, že push
-  funguje jen po přidání appky na plochu.
+  funguje jen po přidání appky na plochu, a po úspěšném zapnutí zobrazí
+  "Uloženo (zařízení: ...)" s počtem uložených zařízení z DB, aby šlo
+  rovnou vidět, že se řádek skutečně zapsal.
+- `syncPushSubscription` (voláno při načtení stránky): pokud prohlížeč už
+  má PushManager subscription, idempotentně ji znovu uloží do
+  `push_subscriptions` (`upsert` na `endpoint`). Tohle opravuje stav, kdy
+  toggle tvrdil "zapnuto" navždy, i když v DB nebyl žádný řádek — dřív se
+  kontrolovat jen prohlížeč, takže ztracený/neúspěšný upsert (nebo smazání
+  řádku runnerem po 404/410) nikdy nikoho nenapadlo zkusit znovu. Pokud má
+  uložená subscription jiný (starý/rotovaný) VAPID klíč než aktuální
+  `VAPID_PUBLIC_KEY`, zkusí se odhlásit a přihlásit znovu s novým klíčem; na
+  iOS to bez gesta může selhat — pak se zobrazí chyba a jde to spravit
+  kliknutím na tlačítko.
 - `apps/web/public/sw.js`: `push` handler zobrazí notifikaci z JSON payloadu
   (`{title, body, url}`), `notificationclick` fokusne/otevře danou URL.
 - `packages/scrapers/src/push.ts`: čte VAPID klíče z `app_secrets`, posílá
   přes `web-push`; odpověď 404/410 znamená mrtvou subscription a řádek se
   rovnou smaže.
+- `packages/scrapers/scripts/send-test-push.ts`: ruční ověření bez čekání na
+  reálný scrape — pošle testovací notifikaci všem subscriptions daného
+  uživatele (`SUPABASE_URL`/`SUPABASE_SERVICE_ROLE_KEY` + user id), nebo
+  jedné subscription přímo bez DB (`VAPID_*` + `SUBSCRIPTION_JSON`). Nejede
+  v CI, spouští se ručně přes `pnpm --filter @scrapping-auta/scrapers
+  send-test-push -- <user-id>`.
 
 ## Známá omezení / co zbývá
 
