@@ -112,6 +112,32 @@ export const MAX_IMAGE_CHECKS_PER_SOURCE_PER_RUN = 150;
 export interface RunOptions {
   dryRun?: boolean;
   sourceFilter?: string;
+  /**
+   * Scopes the whole run to one user's enabled searches (CLI: `--user=
+   * <uuid>`; set by the "Spustit scraping mých hledání" button via
+   * workflow_dispatch's `user_id` input — see apps/web/app/api/scrape/
+   * route.ts, which always derives this from the signed-in user's own
+   * session, never a client-supplied value).
+   *
+   * A user-scoped run:
+   *   - only loads/matches this user's own enabled `searches` rows (so only
+   *     sources those searches actually reference get fetched at all — the
+   *     existing per-source `relevantSearches` skip below already does this
+   *     once `searches` itself is filtered);
+   *   - only e-mails/pushes this user (see `notifyNewMatches`'s
+   *     `userFilter` param);
+   *   - SKIPS every maintenance step that needs a full, all-users picture
+   *     to be trustworthy: `checkGoneListings`, `cleanupUnmatchedListings`,
+   *     `deleteExpiredGoneFavorites`, and `checkSourceHealthAndAlert` — a
+   *     partial run touching only this user's searches/sources can't tell
+   *     "genuinely gone/unmatched" from "just not relevant to this run";
+   *   - still inserts a `scrape_runs` row per source touched (tagged with
+   *     `user_id`), but does NOT update `sources.last_run_at/last_ok_at/
+   *     last_count` — those columns back the "Stav zdrojů" page and the
+   *     health watchdog, both of which expect every source's number to
+   *     reflect a full run, not one user's slice of searches.
+   */
+  userFilter?: string;
   supabaseUrl?: string;
   supabaseServiceRoleKey?: string;
   /** Test a specific saved-search shape in dry-run instead of the default
@@ -437,9 +463,18 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
 
   let searches: SearchRow[] = [];
   if (db) {
-    const { data, error } = await db.from("searches").select("*").eq("enabled", true);
+    let searchesQuery = db.from("searches").select("*").eq("enabled", true);
+    if (opts.userFilter) searchesQuery = searchesQuery.eq("user_id", opts.userFilter);
+    const { data, error } = await searchesQuery;
     if (error) throw error;
     searches = (data ?? []) as unknown as SearchRow[];
+  }
+
+  if (db && opts.userFilter && searches.length === 0) {
+    // Nothing to do — no scrape_runs noise, no per-source fetches, for a
+    // user with no enabled searches at all.
+    console.log(`[runner] user-scoped run for ${opts.userFilter}: no enabled searches, nothing to do`);
+    return;
   }
 
   const allNewMatches: { searchId: string; listingId: string }[] = [];
@@ -670,7 +705,13 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
         }
       }
 
-      goneWarning = await checkGoneListings(db, sourceId, new Set(rawById.keys()));
+      // Gone-listing checks need the full picture (every search across
+      // every user) to safely tell "genuinely gone" from "not fetched by
+      // this run's narrower user-scoped query set" — skipped entirely for a
+      // user-scoped run (see RunOptions.userFilter's doc comment).
+      if (!opts.userFilter) {
+        goneWarning = await checkGoneListings(db, sourceId, new Set(rawById.keys()));
+      }
     } catch (err) {
       errorText = (err as Error).message;
       console.error(`[runner] ${sourceId} failed:`, errorText);
@@ -693,47 +734,67 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
         found,
         new: newCount,
         errors: runErrors,
+        // Tags this row as belonging to a user-scoped manual run (null for
+        // every regular/cron run) — see RunOptions.userFilter's doc comment
+        // and the health watchdog / "Stav zdrojů" page, both of which
+        // filter these out of their history.
+        user_id: opts.userFilter ?? null,
       });
-      await db
-        .from("sources")
-        .update({
-          last_run_at: finishedAt,
-          ...(runErrors ? {} : { last_ok_at: finishedAt }),
-          last_count: found,
-        })
-        .eq("id", sourceId);
 
-      // Source health alert (see health-alert.ts): the scrape itself
-      // failing/returning nothing (errorText) or every relevant query
-      // throwing (searchWarning, e.g. aaaauto's bot-block detection) counts
-      // as "errored" here — but NOT a tripped gone-check circuit breaker
-      // (goneWarning), which is a different, already-surfaced issue, and the
-      // source DID return cars this run in that case, so it shouldn't
-      // trigger a "stopped returning cars" alert.
-      const meta = sourceMetaById.get(sourceId);
-      if (meta) {
-        await checkSourceHealthAndAlert(
-          db,
-          vapid,
-          { id: sourceId, name: meta.name, lastAlertAt: meta.lastAlertAt },
-          found,
-          Boolean(errorText || searchWarning)
-        );
+      // A user-scoped run only ever sees a slice of this source's relevant
+      // searches, so `found`/health here reflect that slice, not the
+      // source's real overall health — never let it overwrite
+      // sources.last_run_at/last_ok_at/last_count, and never feed it to the
+      // health watchdog (see RunOptions.userFilter's doc comment).
+      if (!opts.userFilter) {
+        await db
+          .from("sources")
+          .update({
+            last_run_at: finishedAt,
+            ...(runErrors ? {} : { last_ok_at: finishedAt }),
+            last_count: found,
+          })
+          .eq("id", sourceId);
+
+        // Source health alert (see health-alert.ts): the scrape itself
+        // failing/returning nothing (errorText) or every relevant query
+        // throwing (searchWarning, e.g. aaaauto's bot-block detection) counts
+        // as "errored" here — but NOT a tripped gone-check circuit breaker
+        // (goneWarning), which is a different, already-surfaced issue, and the
+        // source DID return cars this run in that case, so it shouldn't
+        // trigger a "stopped returning cars" alert.
+        const meta = sourceMetaById.get(sourceId);
+        if (meta) {
+          await checkSourceHealthAndAlert(
+            db,
+            vapid,
+            { id: sourceId, name: meta.name, lastAlertAt: meta.lastAlertAt },
+            found,
+            Boolean(errorText || searchWarning)
+          );
+        }
       }
     }
   }
 
   if (db && !dryRun) {
-    // Only a full run (all sources) gets to decide a listing is genuinely
-    // unmatched — a `--source` run only ever sees a slice of the enabled
-    // searches' sources, so it can't tell "not matched by this source's
-    // searches" from "not matched by any search at all".
-    if (!opts.sourceFilter) {
+    // Only a full run (all sources, all users) gets to decide a listing is
+    // genuinely unmatched — a `--source` run only ever sees a slice of the
+    // enabled searches' sources, and a `--user` run only ever sees one
+    // user's searches, so neither can tell "not matched by this run's
+    // narrower search set" from "not matched by any search at all".
+    if (!opts.sourceFilter && !opts.userFilter) {
       await cleanupUnmatchedListings(db);
     }
 
-    await deleteExpiredGoneFavorites(db);
-    await notifyNewMatches(db, vapid);
+    // Needs the full picture across every user's favourites to be safe —
+    // skipped for a user-scoped run (see RunOptions.userFilter's doc
+    // comment).
+    if (!opts.userFilter) {
+      await deleteExpiredGoneFavorites(db);
+    }
+
+    await notifyNewMatches(db, vapid, opts.userFilter);
   }
 }
 
@@ -977,13 +1038,27 @@ export async function resolveUserEmail(db: DbClient, userId: string): Promise<st
  * free-tier "only the account owner" limitation), is logged and skipped,
  * and their matches stay unnotified so the next run retries them. Push
  * (below) is unaffected either way — it's sent independently per search.
+ *
+ * `userFilter` (set for a user-scoped manual run — see RunOptions.
+ * userFilter) restricts BOTH the matches query and the favourites-alert
+ * events to that one user, so a manual "Spustit scraping mych hledani" run
+ * never e-mails/pushes anyone else — including any leftover unnotified
+ * matches from an earlier cron run that happen to belong to a different
+ * user and would otherwise be picked up by this same "notified_at is null"
+ * query.
  */
-async function notifyNewMatches(db: DbClient, vapid: VapidConfig | null): Promise<void> {
-  const { data: pending, error } = await db
+export async function notifyNewMatches(
+  db: DbClient,
+  vapid: VapidConfig | null,
+  userFilter?: string
+): Promise<void> {
+  let pendingQuery = db
     .from("matches")
     .select("id, search_id, listing_id, searches!inner(name, notify, user_id), listings(*)")
     .is("notified_at", null)
     .eq("searches.notify", true);
+  if (userFilter) pendingQuery = pendingQuery.eq("searches.user_id", userFilter);
+  const { data: pending, error } = await pendingQuery;
 
   if (error) {
     console.warn("[runner] failed to load pending matches for notification:", error.message);
@@ -1033,8 +1108,15 @@ async function notifyNewMatches(db: DbClient, vapid: VapidConfig | null): Promis
   // Favourites alerts (price drop / gone — see favorites-alert.ts) ride
   // along on the same digest e-mail as a separate section, and get their
   // own push per owner below. Independent of whether there are any new
-  // matches at all this run.
-  const favoriteEvents = await checkFavoritesAlerts(db);
+  // matches at all this run. `checkFavoritesAlerts` itself scans every
+  // user's favourites (its tracking-column bookkeeping is harmless to run
+  // regardless of scope) — but a user-scoped run's events are filtered down
+  // to just that user below, same as the matches query above, so no other
+  // user gets notified from it.
+  const favoriteEventsAll = await checkFavoritesAlerts(db);
+  const favoriteEvents = userFilter
+    ? favoriteEventsAll.filter((e) => e.userId === userFilter)
+    : favoriteEventsAll;
   const favoriteChanges: NotifyFavoriteChange[] = favoriteEvents.map((e) => e.change);
 
   if (rows.length === 0 && favoriteChanges.length === 0) {

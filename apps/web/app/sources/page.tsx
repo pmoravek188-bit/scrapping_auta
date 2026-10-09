@@ -16,6 +16,11 @@ export default async function SourcesPage() {
     supabase
       .from("scrape_runs")
       .select("*")
+      // A manual, user-scoped run (tagged with user_id — see
+      // packages/scrapers/src/runner.ts's RunOptions.userFilter) only ever
+      // covers one user's searches, so it's excluded from this history
+      // table, which is meant to reflect each source's full-run status.
+      .is("user_id", null)
       .order("started_at", { ascending: false })
       .limit(50),
   ]);

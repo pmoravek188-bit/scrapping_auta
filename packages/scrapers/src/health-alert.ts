@@ -161,6 +161,13 @@ export async function checkSourceHealthAndAlert(
     .from("scrape_runs")
     .select("found, errors, started_at")
     .eq("source", source.id)
+    // A user-scoped manual run (see runner.ts's RunOptions.userFilter) only
+    // ever sees a slice of this source's relevant searches, so its `found`
+    // count doesn't reflect the source's real health — excluded from the
+    // history this decision is computed over (this function itself is also
+    // never called at all during a user-scoped run, but excluding these
+    // rows here too keeps a later GLOBAL run's history clean of them).
+    .is("user_id", null)
     .order("started_at", { ascending: false })
     .limit(HEALTH_ALERT_HISTORY_ROWS);
   if (error) {

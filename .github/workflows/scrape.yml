@@ -22,6 +22,10 @@ on:
         description: "Only run this source id (leave empty to run all enabled sources)"
         required: false
         type: string
+      user_id:
+        description: "Only run this user's searches and notify only them (leave empty for every user's searches — used for the manual 'Spustit scraping' button, see apps/web/app/api/scrape/route.ts)"
+        required: false
+        type: string
 
 jobs:
   scrape:
@@ -64,9 +68,13 @@ jobs:
           NOTIFY_EMAIL_TO: ${{ secrets.NOTIFY_EMAIL_TO }}
           NOTIFY_EMAIL_FROM: ${{ secrets.NOTIFY_EMAIL_FROM }}
           SOURCE_INPUT: ${{ inputs.source }}
+          USER_INPUT: ${{ inputs.user_id }}
         run: |
-          if [ -n "$SOURCE_INPUT" ]; then
-            pnpm scrape -- "--source=$SOURCE_INPUT"
+          ARGS=()
+          if [ -n "$SOURCE_INPUT" ]; then ARGS+=("--source=$SOURCE_INPUT"); fi
+          if [ -n "$USER_INPUT" ]; then ARGS+=("--user=$USER_INPUT"); fi
+          if [ ${#ARGS[@]} -gt 0 ]; then
+            pnpm scrape -- "${ARGS[@]}"
           else
             pnpm scrape
           fi

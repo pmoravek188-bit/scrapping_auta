@@ -158,6 +158,10 @@ export interface Database {
           new: number;
           errors: string | null;
           created_at: string;
+          /** Set only for a manual, user-scoped run (`--user=<uuid>`) — null
+           * for every regular (cron/global) run. The health watchdog and the
+           * "Stav zdrojů" page both ignore rows where this is set. */
+          user_id: string | null;
         };
         Insert: Partial<Database["public"]["Tables"]["scrape_runs"]["Row"]> & { source: string };
         Update: Partial<Database["public"]["Tables"]["scrape_runs"]["Row"]>;
@@ -233,6 +237,19 @@ export interface Database {
         };
         Insert: Database["public"]["Tables"]["app_admins"]["Row"];
         Update: Partial<Database["public"]["Tables"]["app_admins"]["Row"]>;
+        Relationships: [];
+      };
+      manual_scrape_requests: {
+        Row: {
+          id: string;
+          user_id: string;
+          source: string | null;
+          requested_at: string;
+        };
+        Insert: Partial<Database["public"]["Tables"]["manual_scrape_requests"]["Row"]> & {
+          user_id: string;
+        };
+        Update: Partial<Database["public"]["Tables"]["manual_scrape_requests"]["Row"]>;
         Relationships: [];
       };
     };
