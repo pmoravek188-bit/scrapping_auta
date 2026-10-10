@@ -1,6 +1,6 @@
 import Link from "next/link";
 import { Plus } from "lucide-react";
-import { summarizeListingHistory } from "@scrapping-auta/core";
+import { realPriceChanges, summarizeListingHistory } from "@scrapping-auta/core";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 import { NotConfigured } from "@/components/not-configured";
 import { ResultRow, type ResultRowData } from "./result-row";
@@ -126,9 +126,13 @@ export default async function ResultsPage({ searchParams }: { searchParams: Prom
   const totalCount = rows[0]?.total_count ?? 0;
 
   const listingIds = rows.map((r) => r.id);
+  const currencyOrigByListing = new Map(rows.map((r) => [r.id, r.currency_orig ?? "CZK"]));
   const priceDropIds = new Set<string>();
   const favoriteIds = new Set<string>();
-  const historyByListing = new Map<string, { price_czk: number | null; seen_at: string }[]>();
+  const historyByListing = new Map<
+    string,
+    { price_czk: number | null; price_orig: number | null; seen_at: string }[]
+  >();
   if (listingIds.length > 0) {
     // Own favourites (public.favorites, RLS owner-only) for the listings on
     // this page — used below to render each card's heart state.
@@ -141,24 +145,28 @@ export default async function ResultsPage({ searchParams }: { searchParams: Prom
   if (listingIds.length > 0) {
     const { data: history } = await supabase
       .from("price_history")
-      .select("listing_id, price_czk, seen_at")
+      .select("listing_id, price_czk, price_orig, seen_at")
       .in("listing_id", listingIds)
       .order("seen_at", { ascending: true });
-    const lastTwoPerListing = new Map<string, number[]>();
     for (const h of history ?? []) {
       const list = historyByListing.get(h.listing_id) ?? [];
-      list.push({ price_czk: h.price_czk, seen_at: h.seen_at });
+      list.push({ price_czk: h.price_czk, price_orig: h.price_orig, seen_at: h.seen_at });
       historyByListing.set(h.listing_id, list);
-      if (h.price_czk == null) continue;
-      // Last two known prices, chronological order (oldest kept first) — a
-      // decrease between them flags the "zlevněno" badge.
-      const lastTwo = lastTwoPerListing.get(h.listing_id) ?? [];
-      lastTwo.push(h.price_czk);
-      if (lastTwo.length > 2) lastTwo.shift();
-      lastTwoPerListing.set(h.listing_id, lastTwo);
     }
-    for (const [id, prices] of lastTwoPerListing) {
-      if (prices.length === 2 && prices[0]! < prices[1]!) priceDropIds.add(id);
+    // "Zlevněno" badge: the last REAL (FX-noise-filtered) price change was a
+    // decrease — see packages/core/src/price-changes.ts.
+    for (const id of listingIds) {
+      const real = realPriceChanges(
+        (historyByListing.get(id) ?? []).map((h) => ({
+          priceCzk: h.price_czk,
+          priceOrig: h.price_orig,
+          seenAt: h.seen_at,
+        })),
+        currencyOrigByListing.get(id) ?? "CZK"
+      );
+      if (real.length >= 2 && real[real.length - 1]!.priceCzk < real[real.length - 2]!.priceCzk) {
+        priceDropIds.add(id);
+      }
     }
   }
 
@@ -305,7 +313,12 @@ export default async function ResultsPage({ searchParams }: { searchParams: Prom
                   priceEvaluation: priceEvaluations.get(r.id),
                   history: summarizeListingHistory(
                     r.first_seen,
-                    (historyByListing.get(r.id) ?? []).map((h) => ({ priceCzk: h.price_czk, seenAt: h.seen_at }))
+                    (historyByListing.get(r.id) ?? []).map((h) => ({
+                      priceCzk: h.price_czk,
+                      priceOrig: h.price_orig,
+                      seenAt: h.seen_at,
+                    })),
+                    r.currency_orig ?? "CZK"
                   ),
                 };
                 return (

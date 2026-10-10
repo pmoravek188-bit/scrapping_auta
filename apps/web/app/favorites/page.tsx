@@ -56,6 +56,7 @@ export default async function FavoritesPage({
       image_urls: string[];
       is_active: boolean;
       first_seen: string;
+      currency_orig: string;
     } | null;
   };
   const allRows = ((favorites ?? []) as unknown as Row[]).filter((r) => r.listings);
@@ -70,17 +71,20 @@ export default async function FavoritesPage({
   // since added" indicator) and the full history (for "inzerováno N dní ·
   // zlevněno M×") — one query covers both.
   const priceAtAdd = new Map<string, number>();
-  const historyByListing = new Map<string, { price_czk: number | null; seen_at: string }[]>();
+  const historyByListing = new Map<
+    string,
+    { price_czk: number | null; price_orig: number | null; seen_at: string }[]
+  >();
   if (listingIds.length > 0) {
     const { data: history } = await supabase
       .from("price_history")
-      .select("listing_id, price_czk, seen_at")
+      .select("listing_id, price_czk, price_orig, seen_at")
       .in("listing_id", listingIds)
       .order("seen_at", { ascending: true });
     const createdAtByListing = new Map(rows.map((r) => [r.listing_id, r.created_at]));
     for (const h of history ?? []) {
       const list = historyByListing.get(h.listing_id) ?? [];
-      list.push({ price_czk: h.price_czk, seen_at: h.seen_at });
+      list.push({ price_czk: h.price_czk, price_orig: h.price_orig, seen_at: h.seen_at });
       historyByListing.set(h.listing_id, list);
       if (h.price_czk == null || priceAtAdd.has(h.listing_id)) continue;
       const createdAt = createdAtByListing.get(h.listing_id);
@@ -179,8 +183,10 @@ export default async function FavoritesPage({
                   r.listings!.first_seen,
                   (historyByListing.get(r.listing_id) ?? []).map((h) => ({
                     priceCzk: h.price_czk,
+                    priceOrig: h.price_orig,
                     seenAt: h.seen_at,
-                  }))
+                  })),
+                  r.listings!.currency_orig
                 ),
               }}
               createdAt={r.created_at}

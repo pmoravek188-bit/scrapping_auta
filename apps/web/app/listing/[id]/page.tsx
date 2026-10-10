@@ -30,7 +30,7 @@ export default async function ListingDetailPage({ params }: { params: Promise<{ 
     await Promise.all([
       supabase
         .from("price_history")
-        .select("price_czk, seen_at")
+        .select("price_czk, price_orig, currency_orig, seen_at")
         .eq("listing_id", id)
         .order("seen_at", { ascending: true }),
       listing.group_id
@@ -58,7 +58,8 @@ export default async function ListingDetailPage({ params }: { params: Promise<{ 
   const priceEvaluation = priceEvaluations.get(listing.id);
   const history = summarizeListingHistory(
     listing.first_seen,
-    (priceHistory ?? []).map((p) => ({ priceCzk: p.price_czk, seenAt: p.seen_at }))
+    (priceHistory ?? []).map((p) => ({ priceCzk: p.price_czk, priceOrig: p.price_orig, seenAt: p.seen_at })),
+    listing.currency_orig
   );
 
   return (
@@ -120,7 +121,11 @@ export default async function ListingDetailPage({ params }: { params: Promise<{ 
 
       <div className="card">
         <h2 className="mb-3 section-title">Historie ceny</h2>
-        <PriceHistoryChart points={priceHistory ?? []} />
+        <PriceHistoryChart
+          points={priceHistory ?? []}
+          currencyOrig={listing.currency_orig}
+          currentPriceCzk={listing.price_czk}
+        />
       </div>
 
       {(otherOffers ?? []).length > 0 && (

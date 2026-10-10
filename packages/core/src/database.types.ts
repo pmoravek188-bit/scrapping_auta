@@ -124,6 +124,8 @@ export interface Database {
           id: number;
           listing_id: string;
           price_czk: number | null;
+          price_orig: number | null;
+          currency_orig: string | null;
           seen_at: string;
         };
         Insert: Partial<Database["public"]["Tables"]["price_history"]["Row"]> & {
@@ -194,6 +196,7 @@ export interface Database {
           note: string | null;
           status: "none" | "volal" | "prohlidka" | "zamitnuto" | "koupeno";
           last_notified_price: number | null;
+          last_notified_price_orig: number | null;
           last_notified_gone_at: string | null;
         };
         Insert: Partial<Database["public"]["Tables"]["favorites"]["Row"]> & {

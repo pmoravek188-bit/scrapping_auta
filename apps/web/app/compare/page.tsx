@@ -89,7 +89,7 @@ export default async function ComparePage({
     ),
     supabase
       .from("price_history")
-      .select("listing_id, price_czk, seen_at")
+      .select("listing_id, price_czk, price_orig, seen_at")
       .in(
         "listing_id",
         listings.map((l) => l.id)
@@ -100,10 +100,13 @@ export default async function ComparePage({
   ]);
   const groupCountRows = groupCountResult.data;
 
-  const historyByListing = new Map<string, { price_czk: number | null; seen_at: string }[]>();
+  const historyByListing = new Map<
+    string,
+    { price_czk: number | null; price_orig: number | null; seen_at: string }[]
+  >();
   for (const h of historyRows ?? []) {
     const list = historyByListing.get(h.listing_id) ?? [];
-    list.push({ price_czk: h.price_czk, seen_at: h.seen_at });
+    list.push({ price_czk: h.price_czk, price_orig: h.price_orig, seen_at: h.seen_at });
     historyByListing.set(h.listing_id, list);
   }
   const groupOfferCount = new Map<string, number>();
@@ -153,7 +156,12 @@ export default async function ComparePage({
       render: (l) => {
         const history = summarizeListingHistory(
           l.first_seen,
-          (historyByListing.get(l.id) ?? []).map((h) => ({ priceCzk: h.price_czk, seenAt: h.seen_at }))
+          (historyByListing.get(l.id) ?? []).map((h) => ({
+            priceCzk: h.price_czk,
+            priceOrig: h.price_orig,
+            seenAt: h.seen_at,
+          })),
+          l.currency_orig
         );
         return <ListingHistoryLine history={history} className="text-xs text-gray-600" />;
       },

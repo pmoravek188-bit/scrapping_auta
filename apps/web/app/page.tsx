@@ -48,6 +48,7 @@ export default async function DashboardPage() {
       location: string | null;
       image_urls: string[];
       first_seen: string;
+      currency_orig: string;
     } | null;
   }>;
 
@@ -114,7 +115,7 @@ export default async function DashboardPage() {
                     location: r.listings!.location,
                     image_urls: r.listings!.image_urls,
                     priceEvaluation: priceEvaluations.get(r.listings!.id),
-                    history: summarizeListingHistory(r.listings!.first_seen, []),
+                    history: summarizeListingHistory(r.listings!.first_seen, [], r.listings!.currency_orig),
                   }}
                   matchId={r.id}
                   favorite={favoriteIds.has(r.listings!.id)}

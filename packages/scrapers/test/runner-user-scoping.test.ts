@@ -254,7 +254,10 @@ function makeFakeDb(opts: { searches: SearchSeed[]; seedMatches: MatchRow[]; see
           const row = obj._row!;
           const id = `${row.source}:${row.source_id}`;
           listingsRows.set(id, { id, ...row });
-          resolve({ data: { id, price_czk: row.price_czk }, error: null });
+          resolve({
+            data: { id, price_czk: row.price_czk, price_orig: row.price_orig, currency_orig: row.currency_orig },
+            error: null,
+          });
           return;
         }
         if (obj._mode === "delete") {
@@ -263,11 +266,19 @@ function makeFakeDb(opts: { searches: SearchSeed[]; seedMatches: MatchRow[]; see
           return;
         }
         switch (obj._selectCols) {
-          case "id, price_czk, group_id": {
+          case "id, price_czk, price_orig, currency_orig, group_id": {
             const id = `${obj._eq.source}:${obj._eq.source_id}`;
             const row = listingsRows.get(id);
             resolve({
-              data: row ? { id: row.id, price_czk: row.price_czk, group_id: row.group_id ?? null } : null,
+              data: row
+                ? {
+                    id: row.id,
+                    price_czk: row.price_czk,
+                    price_orig: row.price_orig ?? null,
+                    currency_orig: row.currency_orig ?? null,
+                    group_id: row.group_id ?? null,
+                  }
+                : null,
               error: null,
             });
             return;

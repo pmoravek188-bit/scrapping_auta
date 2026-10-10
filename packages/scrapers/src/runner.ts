@@ -622,7 +622,7 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
       for (const listing of toStore) {
         const { data: existing } = await db
           .from("listings")
-          .select("id, price_czk, group_id")
+          .select("id, price_czk, price_orig, currency_orig, group_id")
           .eq("source", sourceId)
           .eq("source_id", listing.sourceId)
           .maybeSingle();
@@ -676,7 +676,7 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
             },
             { onConflict: "source,source_id" }
           )
-          .select("id, price_czk")
+          .select("id, price_czk, price_orig, currency_orig")
           .single();
 
         if (upsertError || !upserted) {
@@ -684,10 +684,25 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
           continue;
         }
         if (!existing) newCount++;
-        if (!existing || existing.price_czk !== upserted.price_czk) {
-          await db
-            .from("price_history")
-            .insert({ listing_id: upserted.id, price_czk: upserted.price_czk });
+        // A new price_history row is only written when the ORIGINAL price
+        // (in its own currency) actually changed — not just when the CZK
+        // conversion moved. For a CZK-native listing price_orig IS price_czk,
+        // so this is exactly the old price_czk-based behaviour. For a
+        // EUR-priced listing (autoscout24/carvago/autobazar), this is what
+        // stops the daily EUR/CZK rate wobble from writing a new row every
+        // run — see supabase/migrations/20261010000000_real_price_changes.sql
+        // and packages/core/src/price-changes.ts for the full story.
+        if (
+          !existing ||
+          existing.price_orig !== upserted.price_orig ||
+          existing.currency_orig !== upserted.currency_orig
+        ) {
+          await db.from("price_history").insert({
+            listing_id: upserted.id,
+            price_czk: upserted.price_czk,
+            price_orig: upserted.price_orig,
+            currency_orig: upserted.currency_orig,
+          });
         }
 
         for (const search of relevantSearches) {

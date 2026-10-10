@@ -1,18 +1,32 @@
 /**
  * Favourites alerts: notify a favourite's owner when it either drops in
  * price or becomes gone (sold/removed from its source) — see
- * supabase/migrations/20261003000100_favorites_notify_tracking.sql for the
- * two tracking columns this relies on:
+ * supabase/migrations/20261003000100_favorites_notify_tracking.sql and
+ * .../20261010000000_real_price_changes.sql for the tracking columns this
+ * relies on:
  *
- *   - `favorites.last_notified_price`: the price (CZK) this favourite was
- *     last notified about (or just seen at, if never notified). A fresh
- *     favourite has this null — it's seeded to the current price on first
- *     sight WITHOUT alerting (there's nothing to compare yet). After that,
- *     a current price strictly below this value is a drop (alert + update
- *     to the new, lower value, so the same drop never re-alerts); a current
- *     price strictly above it just updates the tracked value (no alert) so
- *     a later drop is measured from the most recent known price, not the
- *     price at the moment it was favourited.
+ *   - `favorites.last_notified_price_orig`: the ORIGINAL-currency price
+ *     (`listings.price_orig`) this favourite was last notified about (or
+ *     just seen at, if never notified). This — NOT the CZK price — is what
+ *     the drop/rise decision is actually made on: for a EUR-priced listing
+ *     (autoscout24/carvago/autobazar), price_czk gets re-derived from the
+ *     day's EUR/CZK rate on every run even when the seller never touched
+ *     the price (see packages/core/src/price-changes.ts's doc comment for
+ *     the full story) — comparing price_czk directly would false-alert on
+ *     pure FX wobble. Comparing price_orig is immune to that entirely,
+ *     since it's in the same currency the seller actually set. For a
+ *     CZK-native listing, price_orig IS price_czk, so this is exactly the
+ *     old CZK-based behaviour.
+ *     A fresh favourite has this null — it's seeded to the current
+ *     price_orig on first sight WITHOUT alerting (nothing to compare yet).
+ *     After that, a current price_orig strictly below this value is a drop
+ *     (alert + update to the new, lower value, so the same drop never
+ *     re-alerts); strictly above it just updates the tracked value (no
+ *     alert) so a later drop is measured from the most recent known price,
+ *     not the price at the moment it was favourited.
+ *   - `favorites.last_notified_price`: the CZK price at the same moment —
+ *     kept only for display (the push/e-mail still shows Kč amounts) and as
+ *     a fallback for the rare row where `price_orig` is unexpectedly null.
  *   - `favorites.last_notified_gone_at`: set once a gone listing has been
  *     alerted on. Reset to null if the listing is active again (so a later
  *     re-confirmed "gone" can alert again) — a listing's `gone_at` itself is
@@ -28,6 +42,7 @@ interface FavoriteRow {
   user_id: string;
   listing_id: string;
   last_notified_price: number | null;
+  last_notified_price_orig: number | null;
   last_notified_gone_at: string | null;
   listings: {
     id: string;
@@ -35,6 +50,8 @@ interface FavoriteRow {
     url: string;
     source: string;
     price_czk: number | null;
+    price_orig: number | null;
+    currency_orig: string | null;
     year: number | null;
     mileage_km: number | null;
     fuel: string | null;
@@ -58,7 +75,7 @@ export interface FavoriteChangeEvent {
 export async function checkFavoritesAlerts(db: DbClient): Promise<FavoriteChangeEvent[]> {
   const { data, error } = await db
     .from("favorites")
-    .select("user_id, listing_id, last_notified_price, last_notified_gone_at, listings(*)");
+    .select("user_id, listing_id, last_notified_price, last_notified_price_orig, last_notified_gone_at, listings(*)");
   if (error) {
     console.warn("[favorites-alert] failed to load favorites:", error.message);
     return [];
@@ -71,7 +88,11 @@ export async function checkFavoritesAlerts(db: DbClient): Promise<FavoriteChange
     const listing = row.listings;
     if (!listing) continue;
 
-    const patch: { last_notified_price?: number | null; last_notified_gone_at?: string | null } = {};
+    const patch: {
+      last_notified_price?: number | null;
+      last_notified_price_orig?: number | null;
+      last_notified_gone_at?: string | null;
+    } = {};
 
     // --- gone detection ---
     if (listing.gone_at != null && row.last_notified_gone_at == null) {
@@ -97,7 +118,41 @@ export async function checkFavoritesAlerts(db: DbClient): Promise<FavoriteChange
     }
 
     // --- price drop detection ---
-    if (listing.price_czk != null) {
+    // Decided on the ORIGINAL-currency price (immune to EUR/CZK conversion
+    // noise) whenever we have one; a listing with no price_orig at all
+    // (shouldn't normally happen — normalize.ts always sets it — but
+    // handled defensively) falls back to the old CZK-based comparison.
+    const currentOrig = listing.price_orig;
+    if (currentOrig != null) {
+      if (row.last_notified_price_orig == null) {
+        // Seed only, no alert — nothing to compare against yet.
+        patch.last_notified_price_orig = currentOrig;
+        patch.last_notified_price = listing.price_czk;
+      } else if (currentOrig < row.last_notified_price_orig) {
+        events.push({
+          userId: row.user_id,
+          change: {
+            kind: "price_drop",
+            title: listing.title,
+            url: listing.url,
+            source: listing.source,
+            priceCzk: listing.price_czk,
+            previousPriceCzk: row.last_notified_price,
+            year: listing.year,
+            mileageKm: listing.mileage_km,
+            fuel: listing.fuel,
+            imageUrl: listing.image_urls?.[0] ?? null,
+          },
+        });
+        patch.last_notified_price_orig = currentOrig;
+        patch.last_notified_price = listing.price_czk;
+      } else if (currentOrig > row.last_notified_price_orig) {
+        // Track the latest value (including the CZK figure, purely for
+        // display) — no alert for a rise.
+        patch.last_notified_price_orig = currentOrig;
+        patch.last_notified_price = listing.price_czk;
+      }
+    } else if (listing.price_czk != null) {
       if (row.last_notified_price == null) {
         patch.last_notified_price = listing.price_czk; // seed only, no alert
       } else if (listing.price_czk < row.last_notified_price) {

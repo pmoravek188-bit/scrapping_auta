@@ -12,5 +12,6 @@ export * from "./text-match.js";
 export * from "./image-url.js";
 export * from "./price-evaluation.js";
 export * from "./listing-history.js";
+export * from "./price-changes.js";
 export * from "./vin.js";
 export type { Database, Json } from "./database.types.js";

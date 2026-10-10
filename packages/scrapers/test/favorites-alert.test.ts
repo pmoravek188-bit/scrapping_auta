@@ -7,6 +7,7 @@ interface FavoriteSeedRow {
   user_id: string;
   listing_id: string;
   last_notified_price: number | null;
+  last_notified_price_orig: number | null;
   last_notified_gone_at: string | null;
   listings: {
     id: string;
@@ -14,6 +15,8 @@ interface FavoriteSeedRow {
     url: string;
     source: string;
     price_czk: number | null;
+    price_orig: number | null;
+    currency_orig: string | null;
     year: number | null;
     mileage_km: number | null;
     fuel: string | null;
@@ -70,11 +73,15 @@ function makeFakeDb(rows: FavoriteSeedRow[]) {
   return { db: { from } as unknown as DbClient, updates };
 }
 
+/** A CZK-native listing's price_orig IS its price_czk — defaults keep that
+ * invariant so every test that only cares about price_czk doesn't also need
+ * to juggle price_orig/currency_orig by hand. */
 function row(overrides: Partial<FavoriteSeedRow> = {}): FavoriteSeedRow {
   return {
     user_id: "user-1",
     listing_id: "listing-1",
     last_notified_price: null,
+    last_notified_price_orig: null,
     last_notified_gone_at: null,
     listings: {
       id: "listing-1",
@@ -82,6 +89,8 @@ function row(overrides: Partial<FavoriteSeedRow> = {}): FavoriteSeedRow {
       url: "https://example.com/fabia",
       source: "sauto",
       price_czk: 200000,
+      price_orig: 200000,
+      currency_orig: "CZK",
       year: 2018,
       mileage_km: 90000,
       fuel: "petrol",
@@ -92,19 +101,29 @@ function row(overrides: Partial<FavoriteSeedRow> = {}): FavoriteSeedRow {
   };
 }
 
+/** Sets both tracking columns to the same value — the common case for a
+ * CZK-native listing, where price_orig and price_czk always match. */
+function notifiedAt(price: number | null): { last_notified_price: number | null; last_notified_price_orig: number | null } {
+  return { last_notified_price: price, last_notified_price_orig: price };
+}
+
 describe("checkFavoritesAlerts", () => {
-  it("seeds last_notified_price on a fresh favourite without alerting", async () => {
-    const { db, updates } = makeFakeDb([row({ last_notified_price: null })]);
+  it("seeds last_notified_price/last_notified_price_orig on a fresh favourite without alerting", async () => {
+    const { db, updates } = makeFakeDb([row(notifiedAt(null))]);
     const events = await checkFavoritesAlerts(db);
     expect(events).toHaveLength(0);
     expect(updates).toEqual([
-      { user_id: "user-1", listing_id: "listing-1", patch: { last_notified_price: 200000 } },
+      {
+        user_id: "user-1",
+        listing_id: "listing-1",
+        patch: { last_notified_price_orig: 200000, last_notified_price: 200000 },
+      },
     ]);
   });
 
   it("alerts on a price drop and updates the tracked price to the new lower value", async () => {
     const { db, updates } = makeFakeDb([
-      row({ last_notified_price: 250000, listings: { ...row().listings!, price_czk: 200000 } }),
+      row({ ...notifiedAt(250000), listings: { ...row().listings!, price_czk: 200000, price_orig: 200000 } }),
     ]);
     const events = await checkFavoritesAlerts(db);
     expect(events).toHaveLength(1);
@@ -112,24 +131,32 @@ describe("checkFavoritesAlerts", () => {
     expect(events[0]!.change.priceCzk).toBe(200000);
     expect(events[0]!.change.previousPriceCzk).toBe(250000);
     expect(updates).toEqual([
-      { user_id: "user-1", listing_id: "listing-1", patch: { last_notified_price: 200000 } },
+      {
+        user_id: "user-1",
+        listing_id: "listing-1",
+        patch: { last_notified_price_orig: 200000, last_notified_price: 200000 },
+      },
     ]);
   });
 
   it("does not alert when the price goes up, but does update the tracked value", async () => {
     const { db, updates } = makeFakeDb([
-      row({ last_notified_price: 180000, listings: { ...row().listings!, price_czk: 200000 } }),
+      row({ ...notifiedAt(180000), listings: { ...row().listings!, price_czk: 200000, price_orig: 200000 } }),
     ]);
     const events = await checkFavoritesAlerts(db);
     expect(events).toHaveLength(0);
     expect(updates).toEqual([
-      { user_id: "user-1", listing_id: "listing-1", patch: { last_notified_price: 200000 } },
+      {
+        user_id: "user-1",
+        listing_id: "listing-1",
+        patch: { last_notified_price_orig: 200000, last_notified_price: 200000 },
+      },
     ]);
   });
 
   it("does not alert or update when the price is unchanged", async () => {
     const { db, updates } = makeFakeDb([
-      row({ last_notified_price: 200000, listings: { ...row().listings!, price_czk: 200000 } }),
+      row({ ...notifiedAt(200000), listings: { ...row().listings!, price_czk: 200000, price_orig: 200000 } }),
     ]);
     const events = await checkFavoritesAlerts(db);
     expect(events).toHaveLength(0);
@@ -139,7 +166,7 @@ describe("checkFavoritesAlerts", () => {
   it("never re-alerts the same drop twice (second run sees the already-updated tracked price)", async () => {
     // First run: drop from 250000 -> 200000 notifies and updates the tracker.
     const { db: db1 } = makeFakeDb([
-      row({ last_notified_price: 250000, listings: { ...row().listings!, price_czk: 200000 } }),
+      row({ ...notifiedAt(250000), listings: { ...row().listings!, price_czk: 200000, price_orig: 200000 } }),
     ]);
     const firstEvents = await checkFavoritesAlerts(db1);
     expect(firstEvents).toHaveLength(1);
@@ -147,7 +174,7 @@ describe("checkFavoritesAlerts", () => {
     // Second run: price is still 200000, tracked value is now 200000 too (as
     // the runner would have persisted) -> no new alert.
     const { db: db2 } = makeFakeDb([
-      row({ last_notified_price: 200000, listings: { ...row().listings!, price_czk: 200000 } }),
+      row({ ...notifiedAt(200000), listings: { ...row().listings!, price_czk: 200000, price_orig: 200000 } }),
     ]);
     const secondEvents = await checkFavoritesAlerts(db2);
     expect(secondEvents).toHaveLength(0);
@@ -157,7 +184,7 @@ describe("checkFavoritesAlerts", () => {
     const goneAt = new Date().toISOString();
     const { db, updates } = makeFakeDb([
       row({
-        last_notified_price: 200000, // matches current price, so no price patch happens too
+        ...notifiedAt(200000), // matches current price, so no price patch happens too
         last_notified_gone_at: null,
         listings: { ...row().listings!, gone_at: goneAt },
       }),
@@ -176,7 +203,7 @@ describe("checkFavoritesAlerts", () => {
     // Simulate the already-notified state on a later run: no new alert.
     const { db: db2, updates: updates2 } = makeFakeDb([
       row({
-        last_notified_price: 200000,
+        ...notifiedAt(200000),
         last_notified_gone_at: goneAt,
         listings: { ...row().listings!, gone_at: goneAt },
       }),
@@ -189,7 +216,7 @@ describe("checkFavoritesAlerts", () => {
   it("clears last_notified_gone_at when a previously-gone listing becomes active again", async () => {
     const { db, updates } = makeFakeDb([
       row({
-        last_notified_price: 200000, // matches current price, so no price patch happens too
+        ...notifiedAt(200000), // matches current price, so no price patch happens too
         last_notified_gone_at: new Date().toISOString(),
         listings: { ...row().listings!, gone_at: null },
       }),
@@ -206,6 +233,74 @@ describe("checkFavoritesAlerts", () => {
     const events = await checkFavoritesAlerts(db);
     expect(events).toHaveLength(0);
     expect(updates).toHaveLength(0);
+  });
+
+  describe("EUR-priced favourite (FX-noise immunity)", () => {
+    it("does NOT alert when only the CZK conversion moved (EUR price unchanged)", async () => {
+      const { db, updates } = makeFakeDb([
+        row({
+          last_notified_price: 500_000,
+          last_notified_price_orig: 20_000, // EUR
+          listings: {
+            ...row().listings!,
+            currency_orig: "EUR",
+            price_orig: 20_000, // unchanged EUR price...
+            price_czk: 506_000, // ...but the rate moved, so CZK went up
+          },
+        }),
+      ]);
+      const events = await checkFavoritesAlerts(db);
+      expect(events).toHaveLength(0);
+      // Nothing to write either — the original price (what the decision is
+      // actually made on) didn't change, so the tracker is left exactly as
+      // it was, not "reset" by the FX wobble.
+      expect(updates).toHaveLength(0);
+    });
+
+    it("alerts on a real EUR price drop even if the CZK figure barely moves", async () => {
+      const { db, updates } = makeFakeDb([
+        row({
+          last_notified_price: 500_000,
+          last_notified_price_orig: 20_000,
+          listings: {
+            ...row().listings!,
+            currency_orig: "EUR",
+            price_orig: 19_500, // real seller drop
+            price_czk: 500_500, // almost unchanged in CZK (rate moved the other way)
+          },
+        }),
+      ]);
+      const events = await checkFavoritesAlerts(db);
+      expect(events).toHaveLength(1);
+      expect(events[0]!.change.kind).toBe("price_drop");
+      expect(events[0]!.change.priceCzk).toBe(500_500);
+      expect(events[0]!.change.previousPriceCzk).toBe(500_000);
+      expect(updates).toEqual([
+        {
+          user_id: "user-1",
+          listing_id: "listing-1",
+          patch: { last_notified_price_orig: 19_500, last_notified_price: 500_500 },
+        },
+      ]);
+    });
+
+    it("seeds last_notified_price_orig from price_orig (not price_czk) for a fresh EUR favourite", async () => {
+      const { db, updates } = makeFakeDb([
+        row({
+          ...notifiedAt(null),
+          listings: { ...row().listings!, currency_orig: "EUR", price_orig: 20_000, price_czk: 500_000 },
+        }),
+      ]);
+      const events = await checkFavoritesAlerts(db);
+      expect(events).toHaveLength(0);
+      expect(updates).toEqual([
+        {
+          user_id: "user-1",
+          listing_id: "listing-1",
+          patch: { last_notified_price_orig: 20_000, last_notified_price: 500_000 },
+        },
+      ]);
+    });
   });
 });
 
