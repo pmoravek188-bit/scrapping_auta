@@ -32,6 +32,11 @@ export { createSupabaseClient } from "./db.js";
 
 const CLEANUP_UNMATCHED_AFTER_DAYS = 3;
 const CLEANUP_BATCH_SIZE = 200;
+/** Max match ids per `notified_at` update request — see markMatchesNotified. */
+const NOTIFY_UPDATE_CHUNK_SIZE = 100;
+/** A pending match whose listing was first seen longer ago than this is
+ * stamped as notified without being sent — see notifyNewMatches. */
+const NOTIFY_MAX_LISTING_AGE_DAYS = 3;
 /** Per source, per run — keeps a run from spending its whole time budget
  * re-checking a huge backlog of possibly-gone listings. Any candidate not
  * checked this run is simply picked up again next run. */
@@ -1038,6 +1043,23 @@ export async function resolveUserEmail(db: DbClient, userId: string): Promise<st
 }
 
 /**
+ * Stamps `matches.notified_at` in chunks. One `.in("id", ...)` filter with
+ * hundreds of UUIDs makes the PostgREST request URL too long and the update
+ * fails — which used to leave a whole digest's matches unstamped, so every
+ * following run re-sent the same ~1000 cars as "new".
+ */
+export async function markMatchesNotified(db: DbClient, matchIds: string[]): Promise<void> {
+  const notifiedAt = new Date().toISOString();
+  for (let i = 0; i < matchIds.length; i += NOTIFY_UPDATE_CHUNK_SIZE) {
+    const chunk = matchIds.slice(i, i + NOTIFY_UPDATE_CHUNK_SIZE);
+    const { error } = await db.from("matches").update({ notified_at: notifiedAt }).in("id", chunk);
+    if (error) {
+      console.warn(`[notify] failed to mark ${chunk.length} match(es) as notified:`, error.message);
+    }
+  }
+}
+
+/**
  * Only matches created since the last notification get notified (the
  * `notified_at is null` filter below) — so running the scraper 3x/day (see
  * .github/workflows/scrape.yml) never resends anything already reported,
@@ -1079,19 +1101,36 @@ export async function notifyNewMatches(
     console.warn("[runner] failed to load pending matches for notification:", error.message);
     return;
   }
-  const rows = (pending ?? []) as unknown as Array<{
+  const allRows = (pending ?? []) as unknown as Array<{
     id: string;
     search_id: string;
     searches: { name: string; notify: boolean; user_id: string };
     listings: Record<string, unknown> | null;
   }>;
 
+  // A pending match whose listing is gone, or was first seen too long ago,
+  // isn't "new" any more (e.g. a backlog left over from runs whose stamping
+  // failed) — stamp it as notified without sending, so a digest only ever
+  // carries genuinely fresh, still-live cars.
+  const staleCutoff = Date.now() - NOTIFY_MAX_LISTING_AGE_DAYS * 24 * 60 * 60 * 1000;
+  const staleMatchIds: string[] = [];
+  const rows = allRows.filter((row) => {
+    const l = row.listings as { first_seen?: string | null; gone_at?: string | null } | null;
+    const stale =
+      !l || l.gone_at != null || (l.first_seen != null && Date.parse(l.first_seen) < staleCutoff);
+    if (stale) staleMatchIds.push(row.id);
+    return !stale;
+  });
+  if (staleMatchIds.length > 0) {
+    console.log(`[notify] skipping ${staleMatchIds.length} stale pending match(es) (gone or first seen >${NOTIFY_MAX_LISTING_AGE_DAYS} days ago)`);
+    await markMatchesNotified(db, staleMatchIds);
+  }
+
   interface SearchGroup extends NotifySearchGroup {
     userId: string;
   }
   const groupsBySearch = new Map<string, SearchGroup>();
   for (const row of rows) {
-    if (!row.listings) continue;
     const l = row.listings as {
       title: string;
       url: string;
@@ -1174,7 +1213,7 @@ export async function notifyNewMatches(
     }
     const sent = await sendMatchDigestEmail(email, digest.groups, digest.favoriteChanges, emailConfig);
     if (sent && digest.matchIds.length > 0) {
-      await db.from("matches").update({ notified_at: new Date().toISOString() }).in("id", digest.matchIds);
+      await markMatchesNotified(db, digest.matchIds);
     }
   }
 
