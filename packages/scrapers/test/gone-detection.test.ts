@@ -111,6 +111,21 @@ describe("isGone per-source overrides", () => {
     expect(result).toBe(true);
   });
 
+  it("autoscout24: confirms gone when redirected from /nabidky/ to a search list (same site)", () => {
+    const result = isGone("autoscout24", {
+      originalUrl: "https://www.autoscout24.cz/nabidky/bmw-320-d-xdrive-diesel-seda-abc",
+      status: 200,
+      finalUrl: "https://www.autoscout24.cz/lst/bmw/320",
+      html: "<html>ok</html>",
+    });
+    expect(result).toBe(true);
+  });
+
+  it("autoscout24: does not confirm gone on a live /nabidky/ detail page", () => {
+    const url = "https://www.autoscout24.cz/nabidky/ford-tourneo-custom-diesel-seda-abc";
+    expect(isGone("autoscout24", { originalUrl: url, status: 200, finalUrl: url, html: "<html>ok</html>" })).toBe(false);
+  });
+
   it("falls back to the generic default for a source with no override", () => {
     const result = isGone("carvago", {
       originalUrl: "https://carvago.test/a",

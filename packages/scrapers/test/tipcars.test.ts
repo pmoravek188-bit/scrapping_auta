@@ -181,23 +181,20 @@ describe("tipcars adapter pagination", () => {
     expect(requestedUrl).toBe("https://www.tipcars.com/ojete/opel?str=1-20");
   });
 
-  it("does not retry make-only for an ordinary (non-404) request failure", async () => {
+  it("does not retry make-only for an ordinary (non-404) request failure, and surfaces it as an error", async () => {
+    const fetchText = vi.fn(async () => {
+      throw new Error("network error");
+    });
     vi.doMock("../src/http.js", async () => {
       const actual = await vi.importActual<typeof import("../src/http.js")>("../src/http.js");
-      return {
-        ...actual,
-        fetchText: vi.fn(async () => {
-          throw new Error("network error");
-        }),
-      };
+      return { ...actual, fetchText };
     });
 
     const { tipcarsAdapter } = await import("../src/sources/tipcars.js");
-    const results = await tipcarsAdapter.search(
-      { ...baseQuery, make: "Opel", model: "Zafira Life" },
-      { eurCzkRate: 24, maxPages: 1 }
-    );
-    expect(results).toEqual([]);
+    await expect(
+      tipcarsAdapter.search({ ...baseQuery, make: "Opel", model: "Zafira Life" }, { eurCzkRate: 24, maxPages: 1 })
+    ).rejects.toThrow("request failed on page 0");
+    expect(fetchText).toHaveBeenCalledTimes(1);
   });
 
   it("stops when a page repeats only already-seen ids instead of continuing forever", async () => {

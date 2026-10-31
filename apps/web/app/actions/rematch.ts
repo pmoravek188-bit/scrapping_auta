@@ -11,6 +11,7 @@
  * the same as every other write in this app.
  */
 import {
+  chunk,
   matchesSearch,
   normalizeMake,
   normalizeModel,
@@ -279,8 +280,8 @@ export async function rematchSearch(db: Db, searchId: string): Promise<number> {
       }))
     );
   }
-  if (staleMatchIds.length > 0) {
-    await db.from("matches").delete().in("id", staleMatchIds);
+  for (const ids of chunk(staleMatchIds)) {
+    await db.from("matches").delete().in("id", ids);
   }
 
   return matchingIds.length;

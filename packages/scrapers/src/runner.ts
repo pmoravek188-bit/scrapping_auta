@@ -1,4 +1,5 @@
 import {
+  chunk,
   detectFeatures,
   isFeatureOnlyMismatch,
   matchesSearch,
@@ -32,15 +33,21 @@ export { createSupabaseClient } from "./db.js";
 
 const CLEANUP_UNMATCHED_AFTER_DAYS = 3;
 const CLEANUP_BATCH_SIZE = 200;
-/** Max match ids per `notified_at` update request — see markMatchesNotified. */
-const NOTIFY_UPDATE_CHUNK_SIZE = 100;
+/** Web app base URL for links in the digest e-mail (override with APP_URL). */
+const DEFAULT_APP_URL = "https://scrapping-auta.vercel.app";
+/** How many sources a run scrapes at the same time — see runScrape. */
+const SOURCE_CONCURRENCY = 4;
 /** A pending match whose listing was first seen longer ago than this is
  * stamped as notified without being sent — see notifyNewMatches. */
 const NOTIFY_MAX_LISTING_AGE_DAYS = 3;
 /** Per source, per run — keeps a run from spending its whole time budget
  * re-checking a huge backlog of possibly-gone listings. Any candidate not
  * checked this run is simply picked up again next run. */
-const MAX_GONE_CHECKS_PER_SOURCE = 50;
+const MAX_GONE_CHECKS_PER_SOURCE = 80;
+/** How many not-recently-seen rows (oldest `last_seen` first) the gone-check
+ * loads per source to pick its candidates from — they still have to be
+ * filtered against this run's fetched ids in code. */
+const GONE_CANDIDATE_SCAN_LIMIT = 1000;
 /** A favourited listing confirmed gone from its source is kept (not
  * deleted) for this long after `gone_at`, so the user gets to see "Prodáno /
  * nedostupné od <datum>" on the Oblíbené page before it's swept away. A
@@ -358,18 +365,17 @@ export async function filterListingsWithLoadableImages(
   const droppedNoImage = listings.length - withImages.length;
 
   const existingImageUrlsBySourceId = new Map<string, string[]>();
-  if (db && withImages.length > 0) {
-    const { data, error } = await db
-      .from("listings")
-      .select("source_id, image_urls")
-      .eq("source", sourceId)
-      .in(
-        "source_id",
-        withImages.map((l) => l.sourceId)
-      );
-    if (error) {
-      console.warn(`[runner] ${sourceId}: image-check existing-lookup failed:`, error.message);
-    } else {
+  if (db) {
+    for (const ids of chunk(withImages.map((l) => l.sourceId))) {
+      const { data, error } = await db
+        .from("listings")
+        .select("source_id, image_urls")
+        .eq("source", sourceId)
+        .in("source_id", ids);
+      if (error) {
+        console.warn(`[runner] ${sourceId}: image-check existing-lookup failed:`, error.message);
+        continue;
+      }
       for (const row of data ?? []) {
         existingImageUrlsBySourceId.set(row.source_id, row.image_urls ?? []);
       }
@@ -482,20 +488,22 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
     return;
   }
 
-  const allNewMatches: { searchId: string; listingId: string }[] = [];
-
-  for (const sourceId of sourceIds) {
+  // Sources run concurrently: each one is a different host, and the shared
+  // HTTP client already throttles per host, so this only overlaps waiting on
+  // unrelated sites instead of walking them one after another (a full run
+  // used to take ~2.5 hours).
+  async function runSource(sourceId: string): Promise<void> {
     const adapter = getAdapter(sourceId);
     if (!adapter) {
       console.warn(`[runner] no adapter registered for source "${sourceId}", skipping`);
-      continue;
+      return;
     }
     const relevantSearches = db
       ? searches.filter((s) => s.sources.length === 0 || s.sources.includes(sourceId))
       : [];
     if (db && relevantSearches.length === 0 && searches.length > 0) {
       console.log(`[runner] no enabled searches use "${sourceId}", skipping`);
-      continue;
+      return;
     }
 
     const startedAt = new Date().toISOString();
@@ -510,7 +518,7 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
       const overrideQuery = opts.queryOverride ? toOverrideQuery(opts.queryOverride) : null;
       if (overrideQuery && overrideQuery.sources.length > 0 && !overrideQuery.sources.includes(sourceId)) {
         console.log(`[runner] --query sources filter excludes "${sourceId}", skipping`);
-        continue;
+        return;
       }
       const queries: SearchQuery[] = db
         ? relevantSearches.map(toSearchQuery)
@@ -621,116 +629,19 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
             `  [match] ${listing.title} | ${listing.priceCzk ?? "?"} Kč | ${listing.year ?? "?"} | ${listing.mileageKm ?? "?"} km`
           );
         }
-        continue;
+        return;
       }
 
-      for (const listing of toStore) {
-        const { data: existing } = await db
-          .from("listings")
-          .select("id, price_czk, price_orig, currency_orig, group_id")
-          .eq("source", sourceId)
-          .eq("source_id", listing.sourceId)
-          .maybeSingle();
-
-        let groupId = existing?.group_id ?? null;
-        if (!groupId) {
-          const { data: fpMatch } = await db
-            .from("listings")
-            .select("group_id")
-            .eq("fingerprint", listing.fingerprint)
-            .not("group_id", "is", null)
-            .limit(1)
-            .maybeSingle();
-          groupId = fpMatch?.group_id ?? crypto.randomUUID();
-        }
-
-        const now = new Date().toISOString();
-        const { data: upserted, error: upsertError } = await db
-          .from("listings")
-          .upsert(
-            {
-              source: sourceId,
-              source_id: listing.sourceId,
-              url: listing.url,
-              title: listing.title,
-              make: listing.make,
-              model: listing.model,
-              variant: listing.variant,
-              year: listing.year,
-              mileage_km: listing.mileageKm,
-              price_czk: listing.priceCzk,
-              price_orig: listing.priceOrig,
-              currency_orig: listing.currencyOrig,
-              fuel: listing.fuel,
-              transmission: listing.transmission,
-              power_kw: listing.powerKw,
-              body: listing.body,
-              color: listing.color,
-              location: listing.location,
-              country: listing.country,
-              seller_type: listing.sellerType,
-              vin: listing.vin,
-              image_urls: listing.imageUrls,
-              drive: listing.drive,
-              equipment: listing.equipment,
-              detail_features: listing.detailFeatures,
-              last_seen: now,
-              is_active: true,
-              fingerprint: listing.fingerprint,
-              group_id: groupId,
-            },
-            { onConflict: "source,source_id" }
-          )
-          .select("id, price_czk, price_orig, currency_orig")
-          .single();
-
-        if (upsertError || !upserted) {
-          console.warn(`[runner] upsert failed for ${sourceId}/${listing.sourceId}:`, upsertError?.message);
-          continue;
-        }
-        if (!existing) newCount++;
-        // A new price_history row is only written when the ORIGINAL price
-        // (in its own currency) actually changed — not just when the CZK
-        // conversion moved. For a CZK-native listing price_orig IS price_czk,
-        // so this is exactly the old price_czk-based behaviour. For a
-        // EUR-priced listing (autoscout24/carvago/autobazar), this is what
-        // stops the daily EUR/CZK rate wobble from writing a new row every
-        // run — see supabase/migrations/20261010000000_real_price_changes.sql
-        // and packages/core/src/price-changes.ts for the full story.
-        if (
-          !existing ||
-          existing.price_orig !== upserted.price_orig ||
-          existing.currency_orig !== upserted.currency_orig
-        ) {
-          await db.from("price_history").insert({
-            listing_id: upserted.id,
-            price_czk: upserted.price_czk,
-            price_orig: upserted.price_orig,
-            currency_orig: upserted.currency_orig,
-          });
-        }
-
-        for (const search of relevantSearches) {
-          const query = toSearchQuery(search);
-          if (!matchesSearch(listing, query)) continue;
-          const { data: newMatch } = await db
-            .from("matches")
-            .upsert(
-              { search_id: search.id, listing_id: upserted.id },
-              { onConflict: "search_id,listing_id", ignoreDuplicates: true }
-            )
-            .select("id")
-            .maybeSingle();
-          if (newMatch) allNewMatches.push({ searchId: search.id, listingId: upserted.id });
-        }
-      }
+      const stored = await storeListings(db, sourceId, toStore, relevantSearches);
+      newCount = stored.newCount;
 
       // Gone-listing checks need the full picture (every search across
       // every user) to safely tell "genuinely gone" from "not fetched by
       // this run's narrower user-scoped query set" — skipped entirely for a
       // user-scoped run (see RunOptions.userFilter's doc comment).
       if (!opts.userFilter) {
-        goneWarning = await checkGoneListings(db, sourceId, new Set(rawById.keys()));
+        const controlUrl = rawById.values().next().value?.url ?? null;
+        goneWarning = await checkGoneListings(db, sourceId, new Set(rawById.keys()), controlUrl);
       }
     } catch (err) {
       errorText = (err as Error).message;
@@ -797,6 +708,13 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
     }
   }
 
+  const queue = [...sourceIds];
+  await Promise.all(
+    Array.from({ length: Math.min(SOURCE_CONCURRENCY, queue.length) }, async () => {
+      for (let sourceId = queue.shift(); sourceId; sourceId = queue.shift()) await runSource(sourceId);
+    })
+  );
+
   if (db && !dryRun) {
     // Only a full run (all sources, all users) gets to decide a listing is
     // genuinely unmatched — a `--source` run only ever sees a slice of the
@@ -816,6 +734,163 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
 
     await notifyNewMatches(db, vapid, opts.userFilter);
   }
+}
+
+/** Rows per batched listings/price_history/matches write. Writes go in the
+ * request body (not the URL), so this only bounds payload size. */
+const STORE_BATCH_SIZE = 200;
+
+/**
+ * Persists one source's matched listings in batches — the old one-listing-
+ * at-a-time loop made 3-5 sequential round trips per car, which for a few
+ * thousand cars (GitHub's US runners -> eu-central Supabase) was a large
+ * share of the run's wall time. Per batch:
+ *   1. existing rows (by source + source_id) — new vs. updated, old price,
+ *      and the group_id to keep;
+ *   2. group_id for the rest via a fingerprint lookup (cross-source dedup),
+ *      new listings sharing a fingerprint within the batch share one group;
+ *   3. one upsert of every row;
+ *   4. price_history rows — only where the ORIGINAL price (in its own
+ *      currency) changed, not just the CZK conversion: for a CZK-native
+ *      listing price_orig IS price_czk; for a EUR-priced one this is what
+ *      stops the daily EUR/CZK wobble writing a row every run (see
+ *      supabase/migrations/20261010000000_real_price_changes.sql and
+ *      packages/core/src/price-changes.ts);
+ *   5. matches for every relevant search the listing satisfies (existing
+ *      ones are left alone — `ignoreDuplicates` — so `notified_at` survives).
+ * A failed batch is logged and skipped; the next run retries it.
+ */
+export async function storeListings(
+  db: DbClient,
+  sourceId: string,
+  toStore: Listing[],
+  relevantSearches: SearchRow[]
+): Promise<{ newCount: number }> {
+  const queries = relevantSearches.map((search) => ({ id: search.id, query: toSearchQuery(search) }));
+  let newCount = 0;
+
+  for (const batch of chunk(toStore, STORE_BATCH_SIZE)) {
+    const existingBySourceId = new Map<
+      string,
+      { price_orig: number | null; currency_orig: string | null; group_id: string | null }
+    >();
+    let lookupFailed = false;
+    for (const ids of chunk(batch.map((l) => l.sourceId))) {
+      const { data, error } = await db
+        .from("listings")
+        .select("source_id, price_orig, currency_orig, group_id")
+        .eq("source", sourceId)
+        .in("source_id", ids);
+      if (error) {
+        console.warn(`[runner] ${sourceId}: existing-listings lookup failed, skipping batch:`, error.message);
+        lookupFailed = true;
+        break;
+      }
+      for (const row of data ?? []) existingBySourceId.set(row.source_id, row);
+    }
+    // Without knowing which rows already exist, new-vs-updated and price
+    // changes can't be told apart — leave this batch for the next run.
+    if (lookupFailed) continue;
+
+    const groupByFingerprint = new Map<string, string>();
+    const needGroup = batch.filter((l) => !existingBySourceId.get(l.sourceId)?.group_id);
+    for (const fingerprints of chunk([...new Set(needGroup.map((l) => l.fingerprint))])) {
+      const { data } = await db
+        .from("listings")
+        .select("fingerprint, group_id")
+        .in("fingerprint", fingerprints)
+        .not("group_id", "is", null);
+      for (const row of data ?? []) {
+        if (row.fingerprint && row.group_id) groupByFingerprint.set(row.fingerprint, row.group_id);
+      }
+    }
+
+    const now = new Date().toISOString();
+    const rows = batch.map((listing) => {
+      let groupId = existingBySourceId.get(listing.sourceId)?.group_id ?? groupByFingerprint.get(listing.fingerprint);
+      if (!groupId) {
+        groupId = crypto.randomUUID();
+        groupByFingerprint.set(listing.fingerprint, groupId);
+      }
+      return {
+        source: sourceId,
+        source_id: listing.sourceId,
+        url: listing.url,
+        title: listing.title,
+        make: listing.make,
+        model: listing.model,
+        variant: listing.variant,
+        year: listing.year,
+        mileage_km: listing.mileageKm,
+        price_czk: listing.priceCzk,
+        price_orig: listing.priceOrig,
+        currency_orig: listing.currencyOrig,
+        fuel: listing.fuel,
+        transmission: listing.transmission,
+        power_kw: listing.powerKw,
+        body: listing.body,
+        color: listing.color,
+        location: listing.location,
+        country: listing.country,
+        seller_type: listing.sellerType,
+        vin: listing.vin,
+        image_urls: listing.imageUrls,
+        drive: listing.drive,
+        equipment: listing.equipment,
+        detail_features: listing.detailFeatures,
+        last_seen: now,
+        is_active: true,
+        fingerprint: listing.fingerprint,
+        group_id: groupId,
+      };
+    });
+
+    const { data: upserted, error: upsertError } = await db
+      .from("listings")
+      .upsert(rows, { onConflict: "source,source_id" })
+      .select("id, source_id, price_czk, price_orig, currency_orig");
+    if (upsertError || !upserted) {
+      console.warn(`[runner] ${sourceId}: upsert of ${rows.length} listing(s) failed:`, upsertError?.message);
+      continue;
+    }
+    const idBySourceId = new Map(upserted.map((row) => [row.source_id, row.id]));
+
+    const priceRows = upserted
+      .filter((row) => {
+        const existing = existingBySourceId.get(row.source_id);
+        if (!existing) newCount++;
+        return (
+          !existing || existing.price_orig !== row.price_orig || existing.currency_orig !== row.currency_orig
+        );
+      })
+      .map((row) => ({
+        listing_id: row.id,
+        price_czk: row.price_czk,
+        price_orig: row.price_orig,
+        currency_orig: row.currency_orig,
+      }));
+    if (priceRows.length > 0) {
+      const { error } = await db.from("price_history").insert(priceRows);
+      if (error) console.warn(`[runner] ${sourceId}: price_history insert failed:`, error.message);
+    }
+
+    const matchRows: { search_id: string; listing_id: string }[] = [];
+    for (const listing of batch) {
+      const listingId = idBySourceId.get(listing.sourceId);
+      if (!listingId) continue;
+      for (const { id, query } of queries) {
+        if (matchesSearch(listing, query)) matchRows.push({ search_id: id, listing_id: listingId });
+      }
+    }
+    if (matchRows.length > 0) {
+      const { error } = await db
+        .from("matches")
+        .upsert(matchRows, { onConflict: "search_id,listing_id", ignoreDuplicates: true });
+      if (error) console.warn(`[runner] ${sourceId}: matches upsert failed:`, error.message);
+    }
+  }
+
+  return { newCount };
 }
 
 /**
@@ -851,19 +926,35 @@ export async function runScrape(opts: RunOptions = {}): Promise<void> {
  *      this source this run, and it's logged loudly and returned so the
  *      caller can record it on `scrape_runs.errors`.
  *
+ * The breaker's ratio alone can't tell "blocked" from "a backlog of
+ * genuinely sold cars" — checking the OLDEST unseen listings first (as this
+ * does) naturally finds mostly-gone ones, which used to trip it every run
+ * and leave sold cars in the app forever (carvago: 47/50 404s, all real).
+ * So when it would trip, `controlUrl` — a listing this very run just fetched
+ * from the source's results, i.e. known to be live — is checked the same
+ * way: if the source serves that one normally, it isn't blocking us and the
+ * gone results are trusted; if not (or there's no control), it trips.
+ *
  * Returns a warning message when the circuit breaker tripped, else null.
  */
 export async function checkGoneListings(
   db: DbClient,
   sourceId: string,
-  fetchedSourceIds: Set<string>
+  fetchedSourceIds: Set<string>,
+  controlUrl: string | null = null
 ): Promise<string | null> {
+  // A source that returned nothing this run can't vouch for anything — every
+  // listing would look "missing". Leave it for a healthy run.
+  if (fetchedSourceIds.size === 0) return null;
+
   const { data, error } = await db
     .from("listings")
     .select("id, source_id, url")
     .eq("source", sourceId)
     .eq("is_active", true)
-    .is("gone_at", null);
+    .is("gone_at", null)
+    .order("last_seen", { ascending: true })
+    .limit(GONE_CANDIDATE_SCAN_LIMIT);
   if (error) {
     console.warn(`[runner] gone-check: failed to load ${sourceId} listings:`, error.message);
     return null;
@@ -899,7 +990,7 @@ export async function checkGoneListings(
   const suspicious = checked >= GONE_CIRCUIT_BREAKER_MIN_CHECKED &&
     (ratio > GONE_CIRCUIT_BREAKER_RATIO || goneCount >= GONE_CIRCUIT_BREAKER_MAX_ABSOLUTE);
 
-  if (suspicious) {
+  if (suspicious && !(await controlListingLooksAlive(sourceId, controlUrl))) {
     const warning = `[gone] ${sourceId}: suspicious gone ratio ${goneCount}/${checked}, skipping deletions`;
     console.warn(warning);
     return warning;
@@ -930,6 +1021,24 @@ export async function checkGoneListings(
     `[runner] gone-check ${sourceId}: checked ${checked}, gone ${goneCount}, deleted ${deleted}, kept-favourite ${keptFavorite}`
   );
   return null;
+}
+
+/** Whether a listing known to be live (see checkGoneListings) is served
+ * normally — i.e. a 2xx response that `isGone` doesn't classify as gone. */
+async function controlListingLooksAlive(sourceId: string, controlUrl: string | null): Promise<boolean> {
+  if (!controlUrl) return false;
+  try {
+    const response = await fetchForGoneCheck(controlUrl);
+    const ok =
+      response.status != null &&
+      response.status >= 200 &&
+      response.status < 300 &&
+      !isGone(sourceId, { ...response, originalUrl: controlUrl });
+    console.log(`[runner] gone-check ${sourceId}: control listing ${ok ? "alive" : "NOT served normally"}`);
+    return ok;
+  } catch {
+    return false;
+  }
 }
 
 /**
@@ -1006,12 +1115,12 @@ async function cleanupUnmatchedListings(db: DbClient): Promise<void> {
     const unmatchedIds = rows
       .filter((r) => (!r.matches || r.matches.length === 0) && (!r.favorites || r.favorites.length === 0))
       .map((r) => r.id);
-    if (unmatchedIds.length > 0) {
-      const { error: deleteError } = await db.from("listings").delete().in("id", unmatchedIds);
+    for (const ids of chunk(unmatchedIds)) {
+      const { error: deleteError } = await db.from("listings").delete().in("id", ids);
       if (deleteError) {
         console.warn("[runner] cleanup: failed to delete listings batch:", deleteError.message);
       } else {
-        totalDeleted += unmatchedIds.length;
+        totalDeleted += ids.length;
       }
     }
 
@@ -1050,11 +1159,10 @@ export async function resolveUserEmail(db: DbClient, userId: string): Promise<st
  */
 export async function markMatchesNotified(db: DbClient, matchIds: string[]): Promise<void> {
   const notifiedAt = new Date().toISOString();
-  for (let i = 0; i < matchIds.length; i += NOTIFY_UPDATE_CHUNK_SIZE) {
-    const chunk = matchIds.slice(i, i + NOTIFY_UPDATE_CHUNK_SIZE);
-    const { error } = await db.from("matches").update({ notified_at: notifiedAt }).in("id", chunk);
+  for (const ids of chunk(matchIds)) {
+    const { error } = await db.from("matches").update({ notified_at: notifiedAt }).in("id", ids);
     if (error) {
-      console.warn(`[notify] failed to mark ${chunk.length} match(es) as notified:`, error.message);
+      console.warn(`[notify] failed to mark ${ids.length} match(es) as notified:`, error.message);
     }
   }
 }
@@ -1128,7 +1236,10 @@ export async function notifyNewMatches(
 
   interface SearchGroup extends NotifySearchGroup {
     userId: string;
+    /** Dedup group (same car on several sources) -> the entry already shown. */
+    byCarGroup: Map<string, NotifySearchGroup["listings"][number]>;
   }
+  const appUrl = (process.env.APP_URL || DEFAULT_APP_URL).replace(/\/$/, "");
   const groupsBySearch = new Map<string, SearchGroup>();
   for (const row of rows) {
     const l = row.listings as {
@@ -1140,12 +1251,25 @@ export async function notifyNewMatches(
       mileage_km: number | null;
       fuel: string | null;
       image_urls: string[];
+      group_id: string | null;
     };
-    const group = groupsBySearch.get(row.search_id) ?? {
+    const group: SearchGroup = groupsBySearch.get(row.search_id) ?? {
       searchName: row.searches.name,
       userId: row.searches.user_id,
+      resultsUrl: `${appUrl}/results?search=${row.search_id}`,
       listings: [],
+      byCarGroup: new Map(),
     };
+    groupsBySearch.set(row.search_id, group);
+    // The same car listed on several sources is shown once, naming the
+    // others — its match still gets stamped with the rest (matchIds below).
+    const shown = l.group_id ? group.byCarGroup.get(l.group_id) : undefined;
+    if (shown) {
+      if (l.source !== shown.source && !shown.alsoOn?.includes(l.source)) {
+        shown.alsoOn = [...(shown.alsoOn ?? []), l.source];
+      }
+      continue;
+    }
     group.listings.push({
       title: l.title,
       url: l.url,
@@ -1156,7 +1280,7 @@ export async function notifyNewMatches(
       fuel: l.fuel,
       imageUrl: l.image_urls?.[0] ?? null,
     });
-    groupsBySearch.set(row.search_id, group);
+    if (l.group_id) group.byCarGroup.set(l.group_id, group.listings[group.listings.length - 1]!);
   }
 
   // Favourites alerts (price drop / gone — see favorites-alert.ts) ride
@@ -1195,7 +1319,7 @@ export async function notifyNewMatches(
   for (const [searchId, group] of groupsBySearch) {
     if (group.listings.length === 0) continue;
     const d = digestFor(group.userId);
-    d.groups.push({ searchName: group.searchName, listings: group.listings });
+    d.groups.push({ searchName: group.searchName, listings: group.listings, resultsUrl: group.resultsUrl });
     for (const row of rows) {
       if (row.search_id === searchId) d.matchIds.push(row.id);
     }

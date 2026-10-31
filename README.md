@@ -441,14 +441,15 @@ teprve pak se s nimi něco udělá:
    `gone_at is null`), který nebyl mezi touto dávkou stažených výsledků. Bere
    se v potaz jen když se zdroji tento běh podařilo něco stáhnout bez chyby
    (jinak by "nenašel" mohlo jen znamenat, že zdroj zrovna nejde). Kvůli
-   časovému rozpočtu běhu se na zdroj kontroluje nejvýš 50 kandidátů za běh
-   (`MAX_GONE_CHECKS_PER_SOURCE`) — zbytek se zkusí příští běh.
+   časovému rozpočtu běhu se na zdroj kontroluje nejvýš 80 kandidátů za běh
+   (`MAX_GONE_CHECKS_PER_SOURCE`), nejdéle neviděné první — zbytek se zkusí
+   příští běh.
 2. **Potvrzení**: stáhne se detail inzerátu (`fetchForGoneCheck`, přes
    stejný zdvořilý/throttlovaný `politeFetch` jako cokoliv jiného) a
    vyhodnotí se `isGone()` z `packages/scrapers/src/gone-detection.ts` — 404/410,
    přesměrování pryč z tvaru detailní URL (adaptér-specifické: `sauto`
    mimo `/osobni/detail/…`, `tipcars` mimo `.html`, `bazos` mimo
-   `/inzerat/…`), nebo 200 stránka s frází typu „inzerát byl smazán/
+   `/inzerat/…`, `autoscout24` mimo `/nabidky/…`), nebo 200 stránka s frází typu „inzerát byl smazán/
    prodán/neexistuje“ (česky/německy/anglicky) — u zdrojů bez vlastního
    pravidla se použije jen tato obecná fráze/stavová kontrola.
 3. **Potvrzeně pryč a NENÍ v oblíbených** → inzerát se rovnou smaže
@@ -461,6 +462,12 @@ teprve pak se s nimi něco udělá:
    doby vidí, že vůz zmizel.
 5. **Nepotvrzeno** (síťová chyba, timeout, nebo stránka pořád vypadá jako
    živý inzerát) → inzerát se nechá být a zkusí znovu příští běh.
+
+**Pojistka**: když vyjde podezřele moc „pryč“ (víc než 30 % kontrolovaných
+nebo 20+ za běh), může to být blokace (captcha, geo-blok), ne prodaná auta.
+Pak se stejně zkontroluje jeden inzerát, který tento běh právě stáhl (je
+tedy jistě živý): když ho zdroj vrátí normálně, výsledky platí; když ne,
+nic se nesmaže a varování jde do `scrape_runs.errors`.
 
 `--dry-run` nikdy nic nemaže ani neoznačuje — celá tahle logika běží jen
 při skutečném zápisu do databáze. Runner loguje za každý zdroj řádek

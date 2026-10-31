@@ -214,7 +214,11 @@ export const bazosAdapter: SourceAdapter = {
       try {
         html = await fetchText(url);
       } catch (err) {
-        console.warn(`[bazos] request failed on page ${page}:`, (err as Error).message);
+        const message = (err as Error).message;
+        console.warn(`[bazos] request failed on page ${page}:`, message);
+        // A failed FIRST page (e.g. a Cloudflare 403 challenge) must surface as
+        // an error, not a silent "0 listings" — see autobazar.ts.
+        if (page === 0) throw new Error(`[bazos] request failed on page 0: ${message}`);
         break;
       }
       const items = parseBazosHtml(html);

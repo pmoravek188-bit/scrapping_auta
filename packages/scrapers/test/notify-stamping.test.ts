@@ -113,4 +113,23 @@ describe("notifyNewMatches stamping", () => {
     expect(groups.flatMap((g) => g.listings.map((l) => l.title))).toEqual(["Car 3"]);
     expect(updateChunks.flat().sort()).toEqual(["m1", "m2", "m3"]);
   });
+
+  it("shows a car listed on several sources once, naming the others, and links to the search's results", async () => {
+    const fresh = new Date().toISOString();
+    const { db, updateChunks } = makeDb([
+      row(1, { first_seen: fresh, group_id: "g1", source: "sauto" }),
+      row(2, { first_seen: fresh, group_id: "g1", source: "bazos" }),
+      row(3, { first_seen: fresh, group_id: "g2", source: "sauto" }),
+    ]);
+
+    await notifyNewMatches(db, null);
+
+    const groups = vi.mocked(sendMatchDigestEmail).mock.calls[0]![1];
+    expect(groups[0]!.listings.map((l) => [l.title, l.alsoOn ?? []])).toEqual([
+      ["Car 1", ["bazos"]],
+      ["Car 3", []],
+    ]);
+    expect(groups[0]!.resultsUrl).toMatch(/\/results\?search=s1$/);
+    expect(updateChunks.flat().sort()).toEqual(["m1", "m2", "m3"]);
+  });
 });

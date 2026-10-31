@@ -408,7 +408,11 @@ export const autoscout24Adapter: SourceAdapter = {
       try {
         html = await fetchText(url);
       } catch (err) {
-        console.warn(`[autoscout24] request failed on page ${page}:`, (err as Error).message);
+        const message = (err as Error).message;
+        console.warn(`[autoscout24] request failed on page ${page}:`, message);
+        // A failed FIRST page (e.g. a Cloudflare 403 challenge) must surface as
+        // an error, not a silent "0 listings" — see autobazar.ts.
+        if (page === 0) throw new Error(`[autoscout24] request failed on page 0: ${message}`);
         break;
       }
       const items = parseAutoScout24Html(html);

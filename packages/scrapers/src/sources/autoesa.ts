@@ -120,7 +120,11 @@ export const autoesaAdapter: SourceAdapter = {
       try {
         html = await fetchText(url);
       } catch (err) {
-        console.warn(`[autoesa] request failed on page ${page}:`, (err as Error).message);
+        const message = (err as Error).message;
+        console.warn(`[autoesa] request failed on page ${page}:`, message);
+        // A failed FIRST page (e.g. a Cloudflare 403 challenge) must surface as
+        // an error, not a silent "0 listings" — see autobazar.ts.
+        if (page === 0) throw new Error(`[autoesa] request failed on page 0: ${message}`);
         break;
       }
       const items = parseAutoEsaHtml(html);

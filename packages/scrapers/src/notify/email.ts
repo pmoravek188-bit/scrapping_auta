@@ -39,11 +39,16 @@ export interface NotifyListing {
   mileageKm: number | null;
   fuel: string | null;
   imageUrl: string | null;
+  /** Other sources the same car (same dedup group) is also listed on — it's
+   * shown once in the digest, with these named next to it. */
+  alsoOn?: string[];
 }
 
 export interface NotifySearchGroup {
   searchName: string;
   listings: NotifyListing[];
+  /** Link to this search's results in the web app, when known. */
+  resultsUrl?: string | null;
 }
 
 /** One favourites-digest line item (see favorites-alert.ts): either a price
@@ -184,7 +189,7 @@ function renderCarCardHtml(listing: NotifyListing): string {
     listing.year ? `${listing.year}` : null,
     listing.mileageKm != null ? `${listing.mileageKm.toLocaleString("cs-CZ")} km` : null,
     listing.fuel,
-    listing.source,
+    [listing.source, ...(listing.alsoOn ?? [])].join(", "),
   ]
     .filter(Boolean)
     .join(" · ");
@@ -222,10 +227,14 @@ function renderSearchSectionHtml(group: NotifySearchGroup): string {
     group.listings.length > shown.length
       ? `<p style="font-size:13px;color:#666">…a dalších ${group.listings.length - shown.length} nabídek.</p>`
       : "";
+  const link = group.resultsUrl
+    ? `<p style="font-size:13px;margin:8px 0 0"><a href="${escapeHtml(group.resultsUrl)}" style="color:#2563eb">Zobrazit vše v aplikaci →</a></p>`
+    : "";
   return `
   <h2 style="font-size:17px;margin:24px 0 8px">${escapeHtml(group.searchName)} (${group.listings.length})</h2>
   <table role="presentation" width="100%" cellpadding="0" cellspacing="0">${rows}</table>
-  ${more}`;
+  ${more}
+  ${link}`;
 }
 
 function renderFavoriteChangeCardHtml(change: NotifyFavoriteChange): string {
@@ -296,13 +305,17 @@ export function renderDigestText(
         listing.year,
         listing.mileageKm != null ? `${listing.mileageKm} km` : null,
         listing.fuel,
-        listing.source,
+        [listing.source, ...(listing.alsoOn ?? [])].join("/"),
       ]
         .filter(Boolean)
         .join(", ");
       lines.push(`- ${listing.title} — ${formatCzk(listing.priceCzk)} (${details})`);
       lines.push(`  ${listing.url}`);
     }
+    if (group.listings.length > MAX_CARS_PER_EMAIL) {
+      lines.push(`…a dalších ${group.listings.length - MAX_CARS_PER_EMAIL} nabídek.`);
+    }
+    if (group.resultsUrl) lines.push(`Zobrazit vše v aplikaci: ${group.resultsUrl}`);
     lines.push("");
   }
   if (favoriteChanges.length > 0) {

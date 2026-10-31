@@ -152,7 +152,21 @@ function isGoneBazos(input: GoneCheckInput): boolean {
   }
 }
 
+/** autoscout24 detail URLs are `/nabidky/{slug}`; a removed listing
+ * redirects (200, same site) to the matching search list, e.g.
+ * `/lst/bmw/320` — confirmed live 2026-10-31. */
+function isGoneAutoscout24(input: GoneCheckInput): boolean {
+  if (isGoneGeneric(input)) return true;
+  try {
+    const path = new URL(input.finalUrl).pathname;
+    return !path.startsWith("/nabidky/");
+  } catch {
+    return false;
+  }
+}
+
 const OVERRIDES: Partial<Record<string, (input: GoneCheckInput) => boolean>> = {
+  autoscout24: isGoneAutoscout24,
   sauto: isGoneSauto,
   tipcars: isGoneTipcars,
   bazos: isGoneBazos,
@@ -160,7 +174,7 @@ const OVERRIDES: Partial<Record<string, (input: GoneCheckInput) => boolean>> = {
 
 /** Classifies whether a listing's detail page confirms it's gone from its
  * source. `sourceId` picks a per-adapter override when one exists (sauto,
- * tipcars, bazos); every other source (carvago, aaaauto, autoscout24,
+ * tipcars, bazos, autoscout24); every other source (carvago, aaaauto,
  * dasweltauto, skodaplus, autoesa, havex, generic-html, ...) falls back to
  * {@link isGoneGeneric}.
  *

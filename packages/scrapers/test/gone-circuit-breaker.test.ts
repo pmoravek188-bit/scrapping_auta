@@ -43,6 +43,12 @@ function makeFakeDb(
         is() {
           return obj;
         },
+        order() {
+          return obj;
+        },
+        limit() {
+          return obj;
+        },
         then(resolve: (v: { data: unknown; error: null }) => void) {
           if (obj._mode === "update") {
             updates.push({ id: obj._id!, patch: obj._patch! });
@@ -88,6 +94,10 @@ function candidates(n: number) {
   }));
 }
 
+/** A run that did return something from the source (a run that returned
+ * nothing skips the gone-check entirely — see the last tests below). */
+const FETCHED = new Set(["fetched-this-run"]);
+
 describe("checkGoneListings circuit breaker", () => {
   beforeEach(() => {
     vi.resetModules();
@@ -111,7 +121,7 @@ describe("checkGoneListings circuit breaker", () => {
     const { checkGoneListings } = await import("../src/runner.js");
     const { fake, updates, deletes } = makeFakeDb(rows, new Set());
 
-    const warning = await checkGoneListings(fake, "test-source", new Set());
+    const warning = await checkGoneListings(fake, "test-source", FETCHED);
 
     expect(warning).toContain("suspicious gone ratio");
     expect(warning).toContain("4/10");
@@ -137,7 +147,7 @@ describe("checkGoneListings circuit breaker", () => {
     const { checkGoneListings } = await import("../src/runner.js");
     const { fake, updates, deletes } = makeFakeDb(rows, new Set());
 
-    const warning = await checkGoneListings(fake, "test-source", new Set());
+    const warning = await checkGoneListings(fake, "test-source", FETCHED);
 
     expect(warning).toBeNull();
     expect(deletes).toEqual(["listing-0", "listing-1"]);
@@ -161,7 +171,7 @@ describe("checkGoneListings circuit breaker", () => {
     const { checkGoneListings } = await import("../src/runner.js");
     const { fake, updates, deletes } = makeFakeDb(rows, new Set(["listing-0"]));
 
-    const warning = await checkGoneListings(fake, "test-source", new Set());
+    const warning = await checkGoneListings(fake, "test-source", FETCHED);
 
     expect(warning).toBeNull();
     expect(deletes).toEqual([]);
@@ -182,7 +192,7 @@ describe("checkGoneListings circuit breaker", () => {
     const { checkGoneListings } = await import("../src/runner.js");
     const { fake, deletes } = makeFakeDb(rows, new Set());
 
-    const warning = await checkGoneListings(fake, "test-source", new Set());
+    const warning = await checkGoneListings(fake, "test-source", FETCHED);
 
     expect(warning).toBeNull();
     expect(deletes).toHaveLength(3);
@@ -211,10 +221,64 @@ describe("checkGoneListings circuit breaker", () => {
     const { checkGoneListings } = await import("../src/runner.js");
     const { fake, updates, deletes } = makeFakeDb(rows, new Set());
 
-    const warning = await checkGoneListings(fake, "test-source", new Set());
+    const warning = await checkGoneListings(fake, "test-source", FETCHED);
 
     expect(warning).toContain("suspicious gone ratio");
     expect(updates).toHaveLength(0);
+    expect(deletes).toHaveLength(0);
+  });
+
+  it("trusts a high gone ratio when a known-live control listing is served normally", async () => {
+    const rows = candidates(10);
+    vi.doMock("../src/http.js", async () => {
+      const actual = await vi.importActual<typeof import("../src/http.js")>("../src/http.js");
+      return {
+        ...actual,
+        fetchForGoneCheck: vi.fn(async (url: string) =>
+          url.endsWith("/control")
+            ? { status: 200, finalUrl: url, html: "<html>alive</html>" }
+            : { status: 404, finalUrl: url, html: "" }
+        ),
+      };
+    });
+    const { checkGoneListings } = await import("../src/runner.js");
+    const { fake, deletes } = makeFakeDb(rows, new Set());
+
+    const warning = await checkGoneListings(fake, "test-source", FETCHED, "https://x.test/detail/control");
+
+    expect(warning).toBeNull();
+    expect(deletes).toHaveLength(10);
+  });
+
+  it("still trips when the control listing is not served normally either (source blocking us)", async () => {
+    const rows = candidates(10);
+    vi.doMock("../src/http.js", async () => {
+      const actual = await vi.importActual<typeof import("../src/http.js")>("../src/http.js");
+      return {
+        ...actual,
+        fetchForGoneCheck: vi.fn(async (url: string) => ({ status: 404, finalUrl: url, html: "" })),
+      };
+    });
+    const { checkGoneListings } = await import("../src/runner.js");
+    const { fake, deletes } = makeFakeDb(rows, new Set());
+
+    const warning = await checkGoneListings(fake, "test-source", FETCHED, "https://x.test/detail/control");
+
+    expect(warning).toContain("suspicious gone ratio");
+    expect(deletes).toHaveLength(0);
+  });
+
+  it("skips the check entirely when the source returned nothing this run", async () => {
+    const fetchForGoneCheck = vi.fn();
+    vi.doMock("../src/http.js", async () => {
+      const actual = await vi.importActual<typeof import("../src/http.js")>("../src/http.js");
+      return { ...actual, fetchForGoneCheck };
+    });
+    const { checkGoneListings } = await import("../src/runner.js");
+    const { fake, deletes } = makeFakeDb(candidates(10), new Set());
+
+    expect(await checkGoneListings(fake, "test-source", new Set())).toBeNull();
+    expect(fetchForGoneCheck).not.toHaveBeenCalled();
     expect(deletes).toHaveLength(0);
   });
 });

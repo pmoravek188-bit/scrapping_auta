@@ -183,7 +183,7 @@ function makeFakeDb(opts: { searches: SearchSeed[]; seedMatches: MatchRow[]; see
       _mode: "select" | "upsert" | "delete" | null;
       _selectCols: string | undefined;
       _eq: Record<string, unknown>;
-      _row: Record<string, unknown> | undefined;
+      _rows: Record<string, unknown>[] | undefined;
       select(cols: string): typeof obj;
       eq(col: string, val: unknown): typeof obj;
       is(col: string, val: unknown): typeof obj;
@@ -195,14 +195,14 @@ function makeFakeDb(opts: { searches: SearchSeed[]; seedMatches: MatchRow[]; see
       limit(): typeof obj;
       maybeSingle(): typeof obj;
       single(): typeof obj;
-      upsert(row: Record<string, unknown>): typeof obj;
+      upsert(rows: Record<string, unknown>[]): typeof obj;
       delete(): typeof obj;
       then(resolve: (v: { data: unknown; error: null }) => void): void;
     } = {
       _mode: null,
       _selectCols: undefined,
       _eq: {},
-      _row: undefined,
+      _rows: undefined,
       select(cols) {
         if (!obj._mode) obj._mode = "select";
         obj._selectCols = cols;
@@ -240,9 +240,9 @@ function makeFakeDb(opts: { searches: SearchSeed[]; seedMatches: MatchRow[]; see
       single() {
         return obj;
       },
-      upsert(row) {
+      upsert(rows) {
         obj._mode = "upsert";
-        obj._row = row;
+        obj._rows = rows;
         return obj;
       },
       delete() {
@@ -251,13 +251,18 @@ function makeFakeDb(opts: { searches: SearchSeed[]; seedMatches: MatchRow[]; see
       },
       then(resolve) {
         if (obj._mode === "upsert") {
-          const row = obj._row!;
-          const id = `${row.source}:${row.source_id}`;
-          listingsRows.set(id, { id, ...row });
-          resolve({
-            data: { id, price_czk: row.price_czk, price_orig: row.price_orig, currency_orig: row.currency_orig },
-            error: null,
+          const upserted = obj._rows!.map((row) => {
+            const id = `${row.source}:${row.source_id}`;
+            listingsRows.set(id, { id, ...row });
+            return {
+              id,
+              source_id: row.source_id,
+              price_czk: row.price_czk,
+              price_orig: row.price_orig,
+              currency_orig: row.currency_orig,
+            };
           });
+          resolve({ data: upserted, error: null });
           return;
         }
         if (obj._mode === "delete") {
@@ -266,26 +271,18 @@ function makeFakeDb(opts: { searches: SearchSeed[]; seedMatches: MatchRow[]; see
           return;
         }
         switch (obj._selectCols) {
-          case "id, price_czk, price_orig, currency_orig, group_id": {
-            const id = `${obj._eq.source}:${obj._eq.source_id}`;
-            const row = listingsRows.get(id);
-            resolve({
-              data: row
-                ? {
-                    id: row.id,
-                    price_czk: row.price_czk,
-                    price_orig: row.price_orig ?? null,
-                    currency_orig: row.currency_orig ?? null,
-                    group_id: row.group_id ?? null,
-                  }
-                : null,
-              error: null,
-            });
+          case "source_id, price_orig, currency_orig, group_id": {
+            const rows = [...listingsRows.values()]
+              .filter((row) => row.source === obj._eq.source)
+              .map((row) => ({
+                source_id: row.source_id,
+                price_orig: row.price_orig ?? null,
+                currency_orig: row.currency_orig ?? null,
+                group_id: row.group_id ?? null,
+              }));
+            resolve({ data: rows, error: null });
             return;
           }
-          case "group_id":
-            resolve({ data: null, error: null });
-            return;
           case "id, source_id, url":
             counters.goneCheck++;
             resolve({ data: [], error: null });
@@ -311,13 +308,13 @@ function makeFakeDb(opts: { searches: SearchSeed[]; seedMatches: MatchRow[]; see
       _eq: Record<string, unknown>;
       _is: Record<string, unknown>;
       _inIds: string[] | undefined;
-      _row: { search_id: string; listing_id: string } | undefined;
+      _rows: { search_id: string; listing_id: string }[] | undefined;
       _patch: { notified_at: string } | undefined;
       select(cols: string): typeof obj;
       eq(col: string, val: unknown): typeof obj;
       is(col: string, val: unknown): typeof obj;
       in(col: string, ids: string[]): typeof obj;
-      upsert(row: { search_id: string; listing_id: string }, opts: unknown): typeof obj;
+      upsert(rows: { search_id: string; listing_id: string }[], opts: unknown): typeof obj;
       update(patch: { notified_at: string }): typeof obj;
       maybeSingle(): typeof obj;
       then(resolve: (v: { data: unknown; error: null }) => void): void;
@@ -326,7 +323,7 @@ function makeFakeDb(opts: { searches: SearchSeed[]; seedMatches: MatchRow[]; see
       _eq: {},
       _is: {},
       _inIds: undefined,
-      _row: undefined,
+      _rows: undefined,
       _patch: undefined,
       select(_cols) {
         if (!obj._mode) obj._mode = "select";
@@ -344,9 +341,9 @@ function makeFakeDb(opts: { searches: SearchSeed[]; seedMatches: MatchRow[]; see
         obj._inIds = ids;
         return obj;
       },
-      upsert(row, _opts) {
+      upsert(rows, _opts) {
         obj._mode = "upsert";
-        obj._row = row;
+        obj._rows = rows;
         return obj;
       },
       update(patch) {
@@ -359,20 +356,16 @@ function makeFakeDb(opts: { searches: SearchSeed[]; seedMatches: MatchRow[]; see
       },
       then(resolve) {
         if (obj._mode === "upsert") {
-          const row = obj._row!;
-          const existing = matches.find((m) => m.search_id === row.search_id && m.listing_id === row.listing_id);
-          if (existing) {
-            resolve({ data: null, error: null });
-            return;
+          for (const row of obj._rows!) {
+            if (matches.some((m) => m.search_id === row.search_id && m.listing_id === row.listing_id)) continue;
+            matches.push({
+              id: `${row.search_id}:${row.listing_id}`,
+              search_id: row.search_id,
+              listing_id: row.listing_id,
+              notified_at: null,
+            });
           }
-          const created: MatchRow = {
-            id: `${row.search_id}:${row.listing_id}`,
-            search_id: row.search_id,
-            listing_id: row.listing_id,
-            notified_at: null,
-          };
-          matches.push(created);
-          resolve({ data: { id: created.id }, error: null });
+          resolve({ data: null, error: null });
           return;
         }
         if (obj._mode === "update") {
