@@ -110,6 +110,8 @@ export function ScrapeTrigger({ sources }: { sources: { id: string; name: string
       if (!res.ok) {
         setError(data.message || "Spuštění se nezdařilo.");
         if (data.nextAllowedAt) setNextAllowedAt(data.nextAllowedAt);
+        // Resync with the server so no stale cooldown lingers.
+        void fetchStatus();
       } else {
         // Optimistic: the server just recorded this trigger, so the next
         // one is MANUAL_SCRAPE_COOLDOWN_HOURS away — fetchStatus below picks

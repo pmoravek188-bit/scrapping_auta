@@ -62,6 +62,20 @@ export async function getLatestScrapeRun(
   return data.workflow_runs?.[0] ?? null;
 }
 
+/** Short Czech message for a failed GitHub dispatch, by HTTP status. */
+export function dispatchErrorMessage(status: number): string {
+  if (status === 401 || status === 403) {
+    return "GitHub odmítl token (GITHUB_DISPATCH_TOKEN je neplatný nebo vypršel).";
+  }
+  if (status === 404) {
+    return "GitHub nenašel workflow nebo větev (zkontroluj GITHUB_REPO / GITHUB_REF).";
+  }
+  if (status === 422) {
+    return "GitHub odmítl požadavek (neplatná větev nebo vstupy).";
+  }
+  return "Spuštění přes GitHub se nezdařilo.";
+}
+
 /** Dispatches a scrape.yml workflow_dispatch run, optionally for one source
  * and/or scoped to one user (see scrape.yml's `user_id` input and
  * runner.ts's RunOptions.userFilter — passing `userId` makes the run only
@@ -88,7 +102,7 @@ export async function dispatchScrape(
     // gets a short, generic Czech message (see api/scrape/route.ts's POST).
     const text = await res.text().catch(() => "");
     console.warn(`[scrape-trigger] GitHub dispatch failed (${res.status}):`, text);
-    return { ok: false, status: res.status, message: "Spuštění přes GitHub se nezdařilo." };
+    return { ok: false, status: res.status, message: dispatchErrorMessage(res.status) };
   }
   return { ok: true };
 }
@@ -210,20 +224,35 @@ export async function getLastManualRequestAt(supabase: Db, userId: string): Prom
 
 /** Records a manual trigger for rate-limiting purposes (see
  * decideManualScrapeTrigger) — call only once the trigger has been decided
- * as allowed. */
+ * as allowed. Returns the inserted row's id so the caller can roll it back
+ * (deleteManualScrapeRequest) if the dispatch then fails. */
 export async function recordManualScrapeRequest(
   supabase: Db,
   userId: string,
   source: string | undefined
-): Promise<{ ok: true } | { ok: false; message: string }> {
-  const { error } = await supabase
+): Promise<{ ok: true; id: string } | { ok: false; message: string }> {
+  const { data, error } = await supabase
     .from("manual_scrape_requests")
-    .insert({ user_id: userId, source: source ?? null });
-  if (error) {
+    .insert({ user_id: userId, source: source ?? null })
+    .select("id")
+    .single();
+  if (error || !data) {
     // Supabase's error text is raw/English — log it for debugging but never
     // show it to the user (see api/scrape/route.ts's POST).
-    console.warn("[scrape-trigger] failed to record manual request:", error.message);
+    console.warn("[scrape-trigger] failed to record manual request:", error?.message);
     return { ok: false, message: "Uložení požadavku se nezdařilo." };
   }
-  return { ok: true };
+  return { ok: true, id: data.id };
+}
+
+/** Best-effort rollback of a recorded manual request (used when the GitHub
+ * dispatch fails, so the user isn't put on cooldown for a run that never
+ * started). Never throws. */
+export async function deleteManualScrapeRequest(supabase: Db, id: string): Promise<void> {
+  try {
+    const { error } = await supabase.from("manual_scrape_requests").delete().eq("id", id);
+    if (error) console.warn("[scrape-trigger] failed to delete manual request:", error.message);
+  } catch (e) {
+    console.warn("[scrape-trigger] failed to delete manual request:", e);
+  }
 }

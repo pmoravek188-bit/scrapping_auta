@@ -8,6 +8,7 @@ import {
   computeNextAllowedAt,
   getLastManualRequestAt,
   recordManualScrapeRequest,
+  deleteManualScrapeRequest,
 } from "@/lib/scrape-trigger.server";
 
 export const dynamic = "force-dynamic";
@@ -120,6 +121,8 @@ export async function POST(request: NextRequest) {
 
   const result = await dispatchScrape(config, source, user.id);
   if (!result.ok) {
+    // The run never started — don't leave a cooldown row behind.
+    await deleteManualScrapeRequest(supabase, recorded.id);
     return NextResponse.json({ error: "dispatch_failed", message: result.message }, { status: 502 });
   }
 

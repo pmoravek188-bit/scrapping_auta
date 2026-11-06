@@ -1,6 +1,7 @@
-import { describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import {
   decideManualScrapeTrigger,
+  dispatchScrape,
   computeNextAllowedAt,
   isRunActive,
   MANUAL_SCRAPE_COOLDOWN_HOURS,
@@ -107,5 +108,36 @@ describe("decideManualScrapeTrigger", () => {
 
   it("allows the trigger on a first-ever manual request (no lastRequestAt) with no run active", () => {
     expect(decideManualScrapeTrigger({ latestRun: null, lastRequestAt: null, now })).toEqual({ allowed: true });
+  });
+});
+
+describe("dispatchScrape error messages", () => {
+  afterEach(() => {
+    vi.unstubAllGlobals();
+    vi.restoreAllMocks();
+  });
+
+  async function dispatchWith(status: number) {
+    vi.spyOn(console, "warn").mockImplementation(() => {});
+    vi.stubGlobal(
+      "fetch",
+      vi.fn().mockResolvedValue({ ok: false, status, text: async () => "raw english body" })
+    );
+    return dispatchScrape({ token: "t", repo: "o/r", ref: "main" });
+  }
+
+  it.each([
+    [401, "GitHub odmítl token (GITHUB_DISPATCH_TOKEN je neplatný nebo vypršel)."],
+    [403, "GitHub odmítl token (GITHUB_DISPATCH_TOKEN je neplatný nebo vypršel)."],
+    [404, "GitHub nenašel workflow nebo větev (zkontroluj GITHUB_REPO / GITHUB_REF)."],
+    [422, "GitHub odmítl požadavek (neplatná větev nebo vstupy)."],
+    [500, "Spuštění přes GitHub se nezdařilo."],
+  ])("maps %i to the Czech message", async (status, message) => {
+    expect(await dispatchWith(status)).toEqual({ ok: false, status, message });
+  });
+
+  it("returns ok on success", async () => {
+    vi.stubGlobal("fetch", vi.fn().mockResolvedValue({ ok: true, status: 204 }));
+    expect(await dispatchScrape({ token: "t", repo: "o/r", ref: "main" })).toEqual({ ok: true });
   });
 });
